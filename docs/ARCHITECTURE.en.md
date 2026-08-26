@@ -79,8 +79,9 @@ itself and **travels with it**. As a result:
 
 Each record carries a cheap hash of its properties, so diffing is hash comparison.
 
-Skipped: characters (anything containing a `Humanoid`), helper objects named with a `__`
-prefix, classes outside the list.
+Skipped: helper objects named with a `__` prefix and classes outside the list.
+Characters and rigs **are** transferred: the exchange already pauses during Play,
+so anything with a `Humanoid` in edit mode is real content.
 
 ### Apply
 Applying incoming changes. Order matters:
@@ -168,13 +169,28 @@ separate large problem.
 
 | Limit | Value | Source |
 |---|---|---|
-| Send chunk | 8000 changes | Measured: 20 000 (3.5 MB) in 0.66 s, 60 000 (10.6 MB) times out |
+| Exchange interval | 12 s | reliability over speed; backs off to 60 s on failures |
+| Send chunk | 8000 changes | measured: 20 000 (3.5 MB) in 0.66 s, 60 000 (10.6 MB) times out |
+| Apply slice | 200 objects | Studio gets control back between slices |
 | Request | 32 MB | Studio will not send more anyway |
-| Pull response | 4 MB | The rest arrives on the next exchange |
-| Participant feed | 512 MB | ≈ 3M changes, then the guard kicks in |
-| Project walk | 8000 objects | Guard against huge places; the plugin warns on truncation |
-| Rate | 300 requests/min per address | Flood protection |
-| Big batch | 400 changes | Above that a human confirms |
+| Pull response | 4 MB | the rest arrives on the next exchange |
+| Participant feed | 512 MB | ≈ 3M changes |
+| Project walk | 100 000 objects | guard against an endless walk |
+| Rate | 300 requests/min per address | flood protection |
+| Big batch | 400 changes | above that a human confirms |
+| Deletions | 50 at once | both on receive **and** on send |
+| Minimum version | 3.0 | older ones send batches without ancestry |
+
+## Nothing destructive happens silently
+
+These stop and wait for a human:
+
+- receiving a whole project — always;
+- a batch over 400 changes;
+- over 50 deletions on receive;
+- over 50 deletions on **send** — trouble stays where it happened.
+
+Every confirmation has a reject. Everything is wrapped in a single undo step.
 
 ## Known limitations
 

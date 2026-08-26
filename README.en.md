@@ -14,7 +14,7 @@ Different accounts, different places, different cities — one shared channel.
 
 [![Download plugin](https://img.shields.io/badge/⬇_Download_plugin-RussTeam.rbxm-3a7ae0?style=for-the-badge)](https://github.com/vvladislovv/RussTeam/releases/latest/download/RussTeam.rbxm)
 
-[How it works](#how-it-works) · [Install](#download-and-run) · [Architecture](docs/ARCHITECTURE.en.md) · [Troubleshooting](#troubleshooting) · **[Русский](README.md)**
+[How it works](#how-it-works) · [Install](#download-and-run) · [Architecture](docs/ARCHITECTURE.en.md) · [Bug postmortem](docs/%D0%98%D0%A1%D0%A2%D0%9E%D0%A0%D0%98%D0%AF_%D0%9E%D0%A8%D0%98%D0%91%D0%9E%D0%9A.md) · **[Русский](README.md)**
 
 </div>
 
@@ -47,10 +47,11 @@ while the other side is away: work at night, your teammate picks it up in the mo
 | Parts, models, folders: position, rotation, size | **Union / Negate** — the shape lives on Roblox servers |
 | Meshes with textures, render and collision fidelity | **Terrain** — voxels don't fit the exchange |
 | Materials, colors, transparency, reflectance, physics | **Private assets** — a link travels, not the file |
-| Welds and constraints: `WeldConstraint`, `Motor6D` | Characters and rigs (anything with `Humanoid`) |
-| GUIs: `ScreenGui`, `SurfaceGui`, `BillboardGui` | `Camera`, `Animator` — the engine creates those |
+| Welds and constraints: `WeldConstraint`, `Motor6D` | `Camera`, `Animator` — the engine creates those |
+| GUIs: `ScreenGui`, `SurfaceGui`, `BillboardGui` | |
 | Decals, particles, lights, sound, lighting effects | |
 | Scripts of every kind, Value objects | |
+| Characters, rigs, clothing, `StarterPlayerScripts` | |
 
 ## Download and run
 
@@ -103,7 +104,7 @@ share them privately.
 
 ## How it works
 
-Every 5 seconds the plugin compares the project against the snapshot it saw last time and
+Every 12 seconds the plugin compares the project against the snapshot it saw last time and
 sends **only the difference**: what was added, changed, removed. The whole project never
 travels.
 
@@ -117,23 +118,41 @@ Details in [docs/ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md).
 
 ## Features
 
-**Live mode** — the exchange runs on its own. Turn it off with the button at the bottom of
-the panel and everything becomes manual.
+**Live mode** — the exchange runs on its own every 12 seconds. Turn it off with
+the button at the bottom of the panel.
 
-**Who is in the channel** — see who is around and who is editing right now. An orange dot
-means that person has unsent changes.
+**Send whole project** — uploads everything. Before sending, the plugin clears
+its own earlier batches from the server so stale data cannot resurface.
 
-**Conflicts** — when both sides edited the same object it is not applied silently; you pick
-"take theirs" or "keep mine".
+**Request whole project** — asks your teammate for everything; their plugin
+responds on its own.
 
-**Offline catch-up** — the server keeps changes until **every** participant has fetched
-them. Away for a week? Nothing is lost.
+**Staged application** — large snapshots are applied 200 objects at a time,
+with a progress bar and a warning not to touch the project meanwhile.
 
-**Paused during playtests** — while Play is pressed the exchange stops: Studio spawns
-characters and tools that have nothing to do with the project.
+**Nothing destructive happens silently.** These always stop and wait for you:
 
-**Big-change guard** — more than 400 changes at once need a confirmation click, so a broken
-exchange cannot silently wipe half the project.
+| What | When it asks |
+|---|---|
+| Receiving a whole project | always, with the object count |
+| A big batch | over 400 changes at once |
+| Receiving deletions | over 50 deletions at once |
+| **Sending** your own deletions | over 50 — trouble stays where it happened |
+
+Every confirmation has a reject button.
+
+**Who is in the channel** — who is around, who is editing right now, and **which
+plugin version each one runs**. Mismatched versions are the most common reason
+changes don't arrive. There is a button to kick a participant.
+
+**Paused during playtests** — while Play is pressed nothing is exchanged.
+
+**One copy per Studio** — if the plugin is installed twice, the redundant copy
+disables itself.
+
+**Service actions** (under "Показать подробности"): sync now, remove duplicates,
+repair empty meshes, remove what the teammate doesn't have. All with a preview
+and two presses.
 
 ## Limits
 
@@ -143,10 +162,16 @@ Measured on a live Studio:
 |---|---|
 | One change | ~180 bytes |
 | Studio sends per request | 3.5 MB ≈ 20 000 changes in 0.66 s |
-| Large payloads are chunked | 8000 changes per chunk, total unlimited |
+| Send chunk | 8000 changes |
+| Apply slice | 200 objects |
+| Verified on | **30 000 objects — zero loss, 3.3 s** |
+| Project walk | 100 000 objects |
 | One participant's feed | 512 MB ≈ 3 000 000 changes |
-| Project walk | 1700 objects in 0.02 s |
 | Server capacity | 400 concurrent users, zero errors |
+
+Class coverage: **110**. On a real 2543-object project, 2526 are transferred —
+**99.3%**. The rest cannot be moved at all: `UnionOperation`, `Terrain`,
+`Camera`, and engine-created objects.
 
 ## Troubleshooting
 
@@ -160,6 +185,10 @@ Measured on a live Studio:
 | A mesh arrives as a white block | The mesh asset is private. Share it or use a public one |
 | `идёт запуск игры, обмен на паузе` | Stop Play — no exchange happens during a playtest |
 | Nothing arrives | Make sure both sides typed the channel **identically** |
+| `attempt to index nil with 'CreateToolbar'` | A copy of the plugin was left as a Script inside the place. Delete it from the tree |
+| "принято 0" every 12 seconds | Something is waiting for confirmation — check the buttons at the bottom |
+| Thousands of deletions arrived | **Do not confirm.** Your teammate's project is damaged; have them accept your full snapshot |
+| Participants show different versions | Update everyone: the server rejects versions below 3.0 |
 
 Errors go to **View → Output** as warnings. For a verbose trace set
 `Config.VERBOSE = true`.
