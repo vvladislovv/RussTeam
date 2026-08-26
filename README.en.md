@@ -12,7 +12,9 @@ Different accounts, different places, different cities — one shared channel.
 [![plugin](https://img.shields.io/badge/Roblox-plugin-d63e3e)](https://create.roblox.com/store/asset/97875424740318/RussTeam)
 [![license](https://img.shields.io/badge/license-MIT-66a060)](LICENSE)
 
-[Download](#download-and-run) · [How it works](#how-it-works) · [Architecture](docs/ARCHITECTURE.en.md) · [Troubleshooting](#troubleshooting) · **[Русский](README.md)**
+[![Download plugin](https://img.shields.io/badge/⬇_Download_plugin-RussTeam.rbxm-3a7ae0?style=for-the-badge)](https://github.com/vvladislovv/RussTeam/releases/latest/download/RussTeam.rbxm)
+
+[How it works](#how-it-works) · [Install](#download-and-run) · [Architecture](docs/ARCHITECTURE.en.md) · [Troubleshooting](#troubleshooting) · **[Русский](README.md)**
 
 </div>
 
@@ -57,7 +59,7 @@ while the other side is away: work at night, your teammate picks it up in the mo
 **From the Roblox Store** — [plugin page](https://create.roblox.com/store/asset/97875424740318/RussTeam),
 one click, updates arrive automatically.
 
-**As a file** — grab [`RussTeam.rbxm`](RussTeam.rbxm), drop it into the Studio plugins
+**As a file** — grab [`RussTeam.rbxm`](https://github.com/vvladislovv/RussTeam/releases/latest/download/RussTeam.rbxm) from the latest release, drop it into the Studio plugins
 folder (*Plugins* tab → **Plugins Folder** button) and restart Studio.
 
 > On Windows closing the window is enough. On macOS you need **Cmd+Q** — the close button

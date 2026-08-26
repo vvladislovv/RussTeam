@@ -12,7 +12,9 @@
 [![плагин](https://img.shields.io/badge/Roblox-плагин-d63e3e)](https://create.roblox.com/store/asset/97875424740318/RussTeam)
 [![лицензия](https://img.shields.io/badge/лицензия-MIT-66a060)](LICENSE)
 
-[Скачать](#скачать-и-запустить) · [Как работает](#как-это-работает) · [Архитектура](docs/ARCHITECTURE.md) · [Ошибки](#если-что-то-не-работает) · **[English](README.en.md)**
+[![Скачать плагин](https://img.shields.io/badge/⬇_Скачать_плагин-RussTeam.rbxm-3a7ae0?style=for-the-badge)](https://github.com/vvladislovv/RussTeam/releases/latest/download/RussTeam.rbxm)
+
+[Как работает](#как-это-работает) · [Установка](#скачать-и-запустить) · [Архитектура](docs/ARCHITECTURE.md) · [Ошибки](#если-что-то-не-работает) · **[English](README.en.md)**
 
 </div>
 
@@ -56,7 +58,7 @@ RussTeam переносит. Ты работаешь у себя, напарни
 
 **Из каталога Roblox** — [страница плагина](https://create.roblox.com/store/asset/97875424740318/RussTeam), ставится в один клик, обновления приходят сами.
 
-**Файлом** — скачай [`RussTeam.rbxm`](RussTeam.rbxm), положи в папку плагинов Studio
+**Файлом** — скачай [`RussTeam.rbxm`](https://github.com/vvladislovv/RussTeam/releases/latest/download/RussTeam.rbxm) из последнего релиза, положи в папку плагинов Studio
 (вкладка *Plugins* → кнопка **Plugins Folder**) и перезапусти Studio.
 
 > На Windows достаточно закрыть окно. На Mac нужен **Cmd+Q** — крестик программу не закрывает.
