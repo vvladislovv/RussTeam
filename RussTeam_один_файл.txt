@@ -1,0 +1,2071 @@
+-- RussTeam, собранный в один файл (для вставки в Studio целиком).
+-- Разработка идёт в отдельных модулях, см. папку plugin/.
+
+-- ======================= Config =======================
+local __Config = (function()
+-- Настройки RussTeam: пределы, списки классов и свойств.
+-- Всё, что может понадобиться подкрутить, собрано здесь.
+
+local Config = {}
+
+
+Config.SID_ATTR       = "__vsid"
+Config.MAX_INSTANCES  = 8000
+Config.MAX_FEED_CHAR  = 24000000       -- предел на одну отправку, крупнее шлём порциями
+Config.LOGO           = "rbxassetid://76862624121244"
+Config.LOGO_ON        = "rbxassetid://81200107897024"   -- есть связь
+Config.LOGO_OFF       = "rbxassetid://74248098555570"   -- связи нет
+-- В консоль Studio по умолчанию идут только поломки. Поставь true,
+-- если надо видеть каждый шаг при разборе.
+Config.VERBOSE        = false
+Config.VERSION        = "2.6"          -- видно на сервере: сразу ясно, у кого что запущено
+Config.AUTO_TICK      = 5              -- как часто обмениваемся, секунды
+Config.TICK_MAX       = 60             -- при сбоях отступаем до этого значения
+-- Замер на живой Studio: 20 000 событий (3,5 МБ) уходят за 0,66 с, а 60 000
+-- (10,6 МБ) Roblox уже не вывозит — обрывает по таймауту. Берём с запасом.
+Config.CHUNK_EVENTS   = 8000
+Config.MAX_CONFLICTS  = 50             -- больше в списке держать бессмысленно
+Config.BIG_CHANGE     = 400            -- больше этого за раз не применяем без подтверждения
+Config.IDLE_AFTER     = 300                             -- через сколько секунд считаем, что человек отошёл
+
+-- Что не считаем изменениями проекта. Мусор от запуска игры и служебные
+-- объекты чужих инструментов иначе затапливают напарника.
+-- Только служебное. Camera и Terrain и так не переносятся по классу, а по
+-- имени их отсекать нельзя: деталь можно назвать «Camera», и она настоящая.
+Config.IGNORE_NAMES = {
+	["__Rojo_SessionLock"] = true,
+}
+
+Config.IGNORE_PREFIX = { "__" }        -- служебное и временные папки
+
+-- Персонажей и манекенов (всё, внутри чего есть Humanoid) не переносим: они
+-- появляются сами при запуске игры и весят по сотне деталей. Если понадобится
+-- переносить NPC — поставь false, но приготовься к длинным спискам.
+Config.SKIP_CHARACTERS = true
+
+Config.ROOTS = {
+	"Workspace",
+	"ServerScriptService",
+	"ServerStorage",
+	"ReplicatedStorage",
+	"ReplicatedFirst",
+	"StarterGui",
+	"StarterPack",
+	"StarterPlayer",
+	"Lighting",
+	"SoundService",
+}
+-- Классы, которые переносим.
+Config.SYNCED_CLASSES = {
+	-- контейнеры
+	Folder = true, Model = true, Configuration = true,
+	-- геометрия
+	Part = true, WedgePart = true, CornerWedgePart = true, TrussPart = true,
+	SpawnLocation = true, MeshPart = true, Seat = true, VehicleSeat = true,
+	-- крепления и сварки
+	Attachment = true, Weld = true, Motor6D = true, WeldConstraint = true,
+	Motor = true, Snap = true, HingeConstraint = true, SpringConstraint = true,
+	RopeConstraint = true, RodConstraint = true, AlignPosition = true,
+	AlignOrientation = true, BallSocketConstraint = true, PrismaticConstraint = true,
+	-- поверхности и оформление
+	Decal = true, Texture = true, SurfaceAppearance = true,
+	ParticleEmitter = true, Trail = true, Beam = true, Smoke = true,
+	Fire = true, Sparkles = true, Highlight = true,
+	PointLight = true, SpotLight = true, SurfaceLight = true,
+	-- интерфейсы
+	ScreenGui = true, SurfaceGui = true, BillboardGui = true,
+	Frame = true, TextLabel = true, TextButton = true, TextBox = true,
+	ImageLabel = true, ImageButton = true, ScrollingFrame = true,
+	ViewportFrame = true, VideoFrame = true,
+	UIListLayout = true, UIGridLayout = true, UIPadding = true,
+	UICorner = true, UIStroke = true, UIGradient = true, UIAspectRatioConstraint = true,
+	UISizeConstraint = true, UITextSizeConstraint = true, UIScale = true,
+	-- персонажи
+	Humanoid = true, Accessory = true, HumanoidDescription = true,
+	-- звук
+	Sound = true, SoundGroup = true,
+	-- код
+	Script = true, LocalScript = true, ModuleScript = true,
+	-- значения
+	StringValue = true, NumberValue = true, BoolValue = true, IntValue = true,
+	Vector3Value = true, CFrameValue = true, Color3Value = true, ObjectValue = true,
+	-- освещение и атмосфера
+	Sky = true, Atmosphere = true, BlurEffect = true, BloomEffect = true,
+	DepthOfFieldEffect = true, SunRaysEffect = true, ColorCorrectionEffect = true,
+	-- прочее
+	Animation = true, Tool = true, ClickDetector = true, ProximityPrompt = true,
+	SpecialMesh = true, UIFlexItem = true,
+}
+
+-- Свойства по группам: берутся, если объект проходит IsA.
+Config.GROUP_PROPS = {
+	{ "BasePart", {
+		"Size", "CFrame", "Anchored", "CanCollide", "CanTouch", "CanQuery",
+		"Color", "Material", "MaterialVariant", "Transparency", "Reflectance",
+		"CastShadow", "Massless", "CollisionGroup", "TopSurface", "BottomSurface",
+		"Locked", "PivotOffset", "CustomPhysicalProperties",
+	} },
+	{ "JointInstance",  { "Part0", "Part1", "C0", "C1", "Enabled" } },
+	{ "Constraint",     { "Attachment0", "Attachment1", "Enabled", "Visible" } },
+	{ "GuiObject", {
+		"Size", "Position", "AnchorPoint", "BackgroundColor3", "BackgroundTransparency",
+		"BorderSizePixel", "BorderColor3", "Visible", "ZIndex", "Rotation",
+		"ClipsDescendants", "LayoutOrder",
+	} },
+	{ "TextLabel",      { "Text", "TextColor3", "TextSize", "Font", "TextWrapped",
+	                      "TextXAlignment", "TextYAlignment", "TextScaled", "RichText",
+	                      "TextTransparency", "TextStrokeTransparency", "TextStrokeColor3" } },
+	{ "ImageLabel",     { "Image", "ImageColor3", "ImageTransparency", "ScaleType" } },
+	{ "LayerCollector", { "Enabled", "ResetOnSpawn", "DisplayOrder", "ZIndexBehavior" } },
+	{ "LuaSourceContainer", { "Source" } },
+	{ "Light",          { "Brightness", "Color", "Enabled", "Range", "Shadows" } },
+	{ "ValueBase",      { "Value" } },
+}
+
+-- Свойства конкретных классов, поверх групповых.
+Config.PROPS = {
+	Part            = { "Shape" },
+	-- MeshId сам не записывается: по нему меш собирается через AssetService.
+	MeshPart        = { "MeshId", "TextureID", "DoubleSided",
+	                    "RenderFidelity", "CollisionFidelity" },
+	SpawnLocation   = { "Enabled", "Neutral", "Duration", "TeamColor" },
+	TrussPart       = { "Style" },
+	Seat            = { "Disabled" },
+	VehicleSeat     = { "MaxSpeed", "Torque", "TurnSpeed" },
+	Attachment      = { "CFrame", "Visible" },
+	WeldConstraint  = { "Part0", "Part1", "Enabled" },
+	Script          = { "Disabled", "RunContext" },
+	LocalScript     = { "Disabled" },
+	Decal           = { "Texture", "Face", "Color3", "Transparency", "ZIndex" },
+	Texture         = { "Texture", "Face", "StudsPerTileU", "StudsPerTileV", "Transparency" },
+	SurfaceAppearance = { "ColorMap", "NormalMap", "MetalnessMap", "RoughnessMap", "AlphaMode" },
+	SurfaceGui      = { "Face", "SizingMode", "PixelsPerStud", "AlwaysOnTop", "LightInfluence", "Adornee" },
+	BillboardGui    = { "Size", "StudsOffset", "AlwaysOnTop", "MaxDistance", "LightInfluence", "Adornee" },
+	ParticleEmitter = { "Texture", "Rate", "Speed", "SpreadAngle", "Enabled",
+	                    "LightEmission", "LightInfluence", "Drag", "Acceleration", "EmissionDirection" },
+	Trail           = { "Texture", "Enabled", "Attachment0", "Attachment1",
+	                    "MinLength", "FaceCamera", "LightEmission" },
+	Beam            = { "Texture", "Attachment0", "Attachment1", "Enabled", "Width0", "Width1",
+	                    "CurveSize0", "CurveSize1", "Segments", "FaceCamera" },
+	Highlight       = { "Adornee", "FillColor", "OutlineColor", "FillTransparency",
+	                    "OutlineTransparency", "DepthMode", "Enabled" },
+	Humanoid        = { "MaxHealth", "Health", "WalkSpeed", "JumpPower", "HipHeight",
+	                    "DisplayName", "RigType" },
+	Accessory       = { "AccessoryType" },
+	Sound           = { "SoundId", "Volume", "Playing", "Looped", "PlaybackSpeed",
+	                    "RollOffMaxDistance", "RollOffMinDistance", "SoundGroup" },
+	Animation       = { "AnimationId" },
+	Tool            = { "GripPos", "CanBeDropped", "RequiresHandle", "ToolTip" },
+	ClickDetector   = { "MaxActivationDistance", "CursorIcon" },
+	ProximityPrompt = { "ActionText", "ObjectText", "HoldDuration", "MaxActivationDistance",
+	                    "Enabled", "RequiresLineOfSight", "KeyboardKeyCode" },
+	UICorner        = { "CornerRadius" },
+	UIStroke        = { "Color", "Thickness", "Transparency", "ApplyStrokeMode" },
+	UIGradient      = { "Rotation", "Offset", "Enabled" },
+	UIPadding       = { "PaddingTop", "PaddingBottom", "PaddingLeft", "PaddingRight" },
+	UIListLayout    = { "FillDirection", "Padding", "SortOrder",
+	                    "HorizontalAlignment", "VerticalAlignment" },
+	UIScale         = { "Scale" },
+	UIAspectRatioConstraint = { "AspectRatio", "AspectType", "DominantAxis" },
+	ObjectValue     = { "Value" },
+	CFrameValue     = { "Value" },
+	ScrollingFrame  = { "CanvasSize", "ScrollBarThickness", "AutomaticCanvasSize",
+	                    "ScrollingDirection", "ElasticBehavior" },
+	SpecialMesh     = { "MeshType", "MeshId", "TextureId", "Scale", "Offset", "VertexColor" },
+	Sky             = { "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp",
+	                    "StarCount", "SunAngularSize", "MoonAngularSize", "CelestialBodiesShown" },
+	Atmosphere      = { "Density", "Offset", "Color", "Decay", "Glare", "Haze" },
+	BlurEffect      = { "Size", "Enabled" },
+	BloomEffect     = { "Intensity", "Size", "Threshold", "Enabled" },
+	DepthOfFieldEffect = { "FarIntensity", "FocusDistance", "InFocusRadius", "NearIntensity", "Enabled" },
+	SunRaysEffect   = { "Intensity", "Spread", "Enabled" },
+	ColorCorrectionEffect = { "Brightness", "Contrast", "Saturation", "TintColor", "Enabled" },
+	UIFlexItem      = { "FlexMode", "GrowRatio", "ShrinkRatio" },
+	Model           = {},
+	Folder          = {},
+	Configuration   = {},
+}
+
+
+return Config
+
+end)()
+
+-- ======================= Serialize =======================
+local __Serialize = (function()
+-- Перевод свойств Roblox в JSON и обратно, снимок одного объекта
+-- и его отпечаток для сравнения «изменилось / нет».
+
+local HttpService = game:GetService("HttpService")
+local Config = __Config
+
+local SID_ATTR       = Config.SID_ATTR
+local SYNCED_CLASSES = Config.SYNCED_CLASSES
+local GROUP_PROPS    = Config.GROUP_PROPS
+local PROPS          = Config.PROPS
+
+local Serialize = {}
+
+
+local function encodeValue(v)
+	local t = typeof(v)
+	if t == "Vector3" then
+		return { __t = "v3", d = { v.X, v.Y, v.Z } }
+	elseif t == "Color3" then
+		return { __t = "c3", d = { v.R, v.G, v.B } }
+	elseif t == "UDim" then
+		return { __t = "ud", d = { v.Scale, v.Offset } }
+	elseif t == "UDim2" then
+		return { __t = "ud2", d = { v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset } }
+	elseif t == "Vector2" then
+		return { __t = "v2", d = { v.X, v.Y } }
+	elseif t == "NumberRange" then
+		return { __t = "nr", d = { v.Min, v.Max } }
+	elseif t == "BrickColor" then
+		return { __t = "bc", d = v.Number }
+	elseif t == "PhysicalProperties" then
+		return { __t = "pp", d = { v.Density, v.Friction, v.Elasticity,
+		                           v.FrictionWeight, v.ElasticityWeight } }
+	elseif t == "EnumItem" then
+		return { __t = "en", d = v.Value }
+	elseif t == "Instance" then
+		-- Ссылка на другой объект: несём идентификатор, а не сам объект.
+		-- Если цель ещё не помечена, помечаем прямо сейчас — иначе ссылка потеряется.
+		if not SYNCED_CLASSES[v.ClassName] then return nil end
+		local sid = v:GetAttribute(SID_ATTR)
+		if type(sid) ~= "string" or sid == "" then
+			sid = HttpService:GenerateGUID(false)
+			pcall(function() v:SetAttribute(SID_ATTR, sid) end)
+		end
+		return { __t = "ref", d = sid }
+	elseif t == "number" or t == "string" or t == "boolean" then
+		return v
+	end
+	return nil -- неизвестный тип не переносим
+end
+
+local function decodeValue(v)
+	if type(v) ~= "table" then return v end
+	local k, d = v.__t, v.d
+	if k == "v3" then
+		return Vector3.new(d[1], d[2], d[3])
+	elseif k == "cf" then
+		return CFrame.new(d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12])
+	elseif k == "c3" then
+		return Color3.new(d[1], d[2], d[3])
+	elseif k == "ud" then
+		return UDim.new(d[1], d[2])
+	elseif k == "ud2" then
+		return UDim2.new(d[1], d[2], d[3], d[4])
+	elseif k == "v2" then
+		return Vector2.new(d[1], d[2])
+	elseif k == "nr" then
+		return NumberRange.new(d[1], d[2])
+	elseif k == "bc" then
+		return BrickColor.new(d)
+	elseif k == "pp" then
+		return PhysicalProperties.new(d[1], d[2], d[3], d[4], d[5])
+	elseif k == "en" then
+		return d -- присваивание числа в Enum-свойство Roblox принимает
+	elseif k == "ref" then
+		return nil -- ссылки ставятся отдельным проходом, когда цель уже создана
+	end
+	return nil
+end
+
+-- CFrame:GetComponents возвращает 12 значений, а не таблицу — оборачиваем.
+local function packCFrame(cf)
+	local a, b, c, d, e, f, g, h, i, j, k, l = cf:GetComponents()
+	return { __t = "cf", d = { a, b, c, d, e, f, g, h, i, j, k, l } }
+end
+
+--==============================================================
+-- Идентификаторы и обход дерева
+--==============================================================
+
+local function newSid()
+	return HttpService:GenerateGUID(false)
+end
+
+local function ensureSid(inst)
+	local sid = inst:GetAttribute(SID_ATTR)
+	if type(sid) ~= "string" or sid == "" then
+		sid = newSid()
+		inst:SetAttribute(SID_ATTR, sid)
+	end
+	return sid
+end
+
+local function rootSid(name)
+	return "root:" .. name
+end
+
+local function propListFor(inst)
+	local list, seen = {}, {}
+	local function add(name)
+		if not seen[name] then
+			seen[name] = true
+			table.insert(list, name)
+		end
+	end
+	for _, entry in ipairs(GROUP_PROPS) do
+		local ok, isType = pcall(function() return inst:IsA(entry[1]) end)
+		if ok and isType then
+			for _, name in ipairs(entry[2]) do add(name) end
+		end
+	end
+	for _, name in ipairs(PROPS[inst.ClassName] or {}) do add(name) end
+	return list
+end
+
+local function capture(inst, parentSid)
+	local props = {}
+	for _, name in ipairs(propListFor(inst)) do
+		local ok, raw = pcall(function() return inst[name] end)
+		if ok then
+			local enc
+			if typeof(raw) == "CFrame" then
+				enc = packCFrame(raw)
+			else
+				enc = encodeValue(raw)
+			end
+			if enc ~= nil then props[name] = enc end
+		end
+	end
+	return {
+		sid    = ensureSid(inst),
+		cls    = inst.ClassName,
+		name   = inst.Name,
+		parent = parentSid,
+		props  = props,
+	}
+end
+
+-- Простой хэш записи — чтобы дёшево сравнивать «изменилось / нет».
+local function hashRecord(rec)
+	local ok, s = pcall(HttpService.JSONEncode, HttpService, {
+		rec.cls, rec.name, rec.parent, rec.props,
+	})
+	if not ok then return "?" end
+	local h = 5381
+	for i = 1, #s do
+		h = (h * 33 + string.byte(s, i)) % 4294967296
+	end
+	return tostring(h) .. ":" .. tostring(#s)
+end
+
+Serialize.encodeValue = encodeValue
+Serialize.decodeValue = decodeValue
+Serialize.packCFrame  = packCFrame
+Serialize.newSid      = newSid
+Serialize.ensureSid   = ensureSid
+Serialize.rootSid     = rootSid
+Serialize.propListFor = propListFor
+Serialize.capture     = capture
+Serialize.hashRecord  = hashRecord
+
+return Serialize
+
+end)()
+
+-- ======================= Tree =======================
+local __Tree = (function()
+-- Обход дерева проекта и сравнение двух снимков.
+-- Здесь решается, что вообще считать изменением.
+
+local Config    = __Config
+local Serialize = __Serialize
+
+local SID_ATTR       = Config.SID_ATTR
+local SYNCED_CLASSES = Config.SYNCED_CLASSES
+local IGNORE_NAMES   = Config.IGNORE_NAMES
+local IGNORE_PREFIX  = Config.IGNORE_PREFIX
+local MAX_INSTANCES  = Config.MAX_INSTANCES
+local ROOTS          = Config.ROOTS
+local SKIP_CHARACTERS = Config.SKIP_CHARACTERS
+
+local capture    = Serialize.capture
+local hashRecord = Serialize.hashRecord
+local newSid     = Serialize.newSid
+local rootSid    = Serialize.rootSid
+
+local Tree = {}
+
+local truncated = false
+
+local function scan()
+	local snap, index = {}, {}
+	local count = 0
+	truncated = false
+
+	-- Персонажи (всё, внутри чего есть Humanoid) появляются и исчезают сами
+	-- при запуске игры. Их синхронизировать бессмысленно.
+	local function isCharacter(inst)
+		return inst:FindFirstChildOfClass("Humanoid") ~= nil
+	end
+
+	local function ignored(inst)
+		if IGNORE_NAMES[inst.Name] then return true end
+		for _, pref in ipairs(IGNORE_PREFIX) do
+			if inst.Name:sub(1, #pref) == pref then return true end
+		end
+		return SKIP_CHARACTERS and isCharacter(inst)
+	end
+
+	local function walk(inst, parentSid)
+		for _, child in ipairs(inst:GetChildren()) do
+			if ignored(child) then
+				continue
+			end
+			if SYNCED_CLASSES[child.ClassName] then
+				if count >= MAX_INSTANCES then
+					truncated = true
+					return
+				end
+				count += 1
+				-- Копирование в Studio (Ctrl+D) переносит и атрибуты, поэтому
+				-- у копии тот же номер, что у оригинала. Такую копию надо
+				-- пометить заново, иначе два объекта считаются одним.
+				local existing = child:GetAttribute(SID_ATTR)
+				if type(existing) == "string" and snap[existing] then
+					child:SetAttribute(SID_ATTR, newSid())
+				end
+				local rec = capture(child, parentSid)
+				rec.hash = hashRecord(rec)
+				snap[rec.sid] = rec
+				index[rec.sid] = child
+				walk(child, rec.sid)
+			end
+		end
+	end
+
+	for _, rootName in ipairs(ROOTS) do
+		local ok, root = pcall(function() return game:GetService(rootName) end)
+		if ok and root then
+			walk(root, rootSid(rootName))
+		end
+	end
+
+	return snap, index, count
+end
+
+--==============================================================
+-- Разница между снимками
+--==============================================================
+
+local function diff(oldSnap, newSnap)
+	local events = {}
+
+	for sid, rec in pairs(newSnap) do
+		local prev = oldSnap[sid]
+		if not prev then
+			table.insert(events, { op = "add", rec = rec })
+		elseif prev.hash ~= rec.hash then
+			table.insert(events, { op = "set", rec = rec, base = prev.hash })
+		end
+	end
+
+	for sid, prev in pairs(oldSnap) do
+		if not newSnap[sid] then
+			table.insert(events, { op = "del", sid = sid, name = prev.name, base = prev.hash })
+		end
+	end
+
+	return events
+end
+
+--==============================================================
+-- Применение чужих изменений
+--==============================================================
+Tree.scan = scan
+Tree.diff = diff
+Tree.wasTruncated = function() return truncated end
+
+return Tree
+
+end)()
+
+-- ======================= Apply =======================
+local __Apply = (function()
+-- Применение чужих изменений к своему проекту: создание, правка,
+-- ссылки между объектами и удаление в правильном порядке.
+
+local AssetService = game:GetService("AssetService")
+
+local Config    = __Config
+local Serialize = __Serialize
+
+local SID_ATTR    = Config.SID_ATTR
+local decodeValue = Serialize.decodeValue
+
+local Apply = {}
+
+-- Точка отсчёта и сообщения о поломках приходят снаружи:
+-- модуль не должен знать, откуда берётся состояние.
+local baseline, onError = {}, function() end
+
+function Apply.setBaseline(snap) baseline = snap or {} end
+function Apply.setErrorSink(fn) onError = fn or function() end end
+
+local function logError(fmt, ...) onError(string.format(fmt, ...)) end
+
+local function resolveParent(parentSid, index)
+	if type(parentSid) == "string" and parentSid:sub(1, 5) == "root:" then
+		local ok, svc = pcall(function() return game:GetService(parentSid:sub(6)) end)
+		return ok and svc or nil
+	end
+	return index[parentSid]
+end
+
+-- Готовые меши держим наготове: собрать один меш стоит запроса к Roblox,
+-- а копия делается мгновенно. На модели из тысячи мешей разница огромная.
+local meshCache = {}
+
+-- Точность столкновений и отрисовки влияют на то, как Roblox собирает меш,
+-- поэтому их надо задать при создании: присвоить потом не получится.
+local function makeMeshPart(meshId, collision, render)
+	local key = string.format("%s|%s|%s", meshId, tostring(collision), tostring(render))
+	if meshCache[key] then
+		return meshCache[key]:Clone()
+	end
+	local ok, made = pcall(function()
+		return AssetService:CreateMeshPartAsync(meshId, {
+			CollisionFidelity = collision or Enum.CollisionFidelity.Default,
+			RenderFidelity = render or Enum.RenderFidelity.Automatic,
+		})
+	end)
+	if not ok or not made then
+		return nil, tostring(made)
+	end
+	meshCache[key] = made
+	return made:Clone()
+end
+
+-- rec нужен, чтобы понять, как именно создавать объект.
+-- MeshPart нельзя создать пустым и потом присвоить MeshId: Roblox запрещает
+-- запись этого свойства. Меш собирается только через AssetService.
+local function createInstance(cls, rec)
+	if cls == "MeshPart" then
+		local props = rec and rec.props or {}
+		local encoded = props.MeshId
+		local meshId = (type(encoded) == "string") and encoded or nil
+		if meshId and meshId ~= "" then
+			-- значения приходят числами: у Enum-свойств мы храним .Value
+			local collision, render
+			local cv, rv = props.CollisionFidelity, props.RenderFidelity
+			if type(cv) == "table" and cv.d then
+				collision = Enum.CollisionFidelity:FromValue(cv.d)
+			end
+			if type(rv) == "table" and rv.d then
+				render = Enum.RenderFidelity:FromValue(rv.d)
+			end
+			local made, err = makeMeshPart(meshId, collision, render)
+			if made then return made end
+			logError("меш %s недоступен (%s) — поставил обычную деталь",
+				meshId, tostring(err):sub(1, 60))
+		end
+	end
+
+	local ok, inst = pcall(Instance.new, cls)
+	if ok and inst then return inst end
+
+	local ok2, fallback = pcall(Instance.new, "Part")
+	if ok2 then
+		logError("класс %s создать не вышло, поставил Part", cls)
+		return fallback
+	end
+	return nil
+end
+
+-- Ссылки нельзя ставить сразу: цель может приехать позже в том же пакете.
+-- Копим их здесь и раскладываем последним проходом.
+local deferredRefs = {}
+
+-- Эти свойства Roblox запрещает записывать: их учитывают при создании.
+local READ_ONLY = { MeshId = true, CollisionFidelity = true }
+
+local function applyProps(inst, props)
+	for name, encoded in pairs(props) do
+		if READ_ONLY[name] then continue end
+		if type(encoded) == "table" and encoded.__t == "ref" then
+			table.insert(deferredRefs, { inst = inst, prop = name, sid = encoded.d })
+		else
+			local value = decodeValue(encoded)
+			if value ~= nil then
+				pcall(function() inst[name] = value end)
+			end
+		end
+	end
+end
+
+local function flushRefs(index)
+	local placed, lost = 0, 0
+	for _, r in ipairs(deferredRefs) do
+		local target = index[r.sid]
+		if target and r.inst.Parent then
+			local ok = pcall(function() r.inst[r.prop] = target end)
+			if ok then placed += 1 else lost += 1 end
+		else
+			lost += 1
+		end
+	end
+	deferredRefs = {}
+	if placed > 0 or lost > 0 then
+		logError("ссылки: поставлено %d, потеряно %d", placed, lost)
+	end
+end
+
+-- Применяет один пакет. Возвращает список конфликтов.
+local function applyEvents(events, localSnap, index, authorOfBatch)
+	local conflicts = {}
+
+	local adds, sets, dels = {}, {}, {}
+	for _, ev in ipairs(events) do
+		if ev.op == "add" then table.insert(adds, ev)
+		elseif ev.op == "set" then table.insert(sets, ev)
+		else table.insert(dels, ev) end
+	end
+
+	-- Сборка меша — обращение к Roblox, оно не мгновенное. На большой модели
+	-- их сотни, поэтому каждые 20 объектов отдаём управление Studio,
+	-- иначе она подвиснет на минуту и покажется, что всё сломалось.
+	local built = 0
+	local function breathe()
+		built += 1
+		if built % 20 == 0 then task.wait() end
+	end
+
+	-- Создание: несколько проходов, потому что родитель может приехать
+	-- в том же пакете и ещё не существовать.
+	local remaining = adds
+	for _ = 1, 8 do
+		if #remaining == 0 then break end
+		local stillWaiting = {}
+		for _, ev in ipairs(remaining) do
+			local rec = ev.rec
+			if index[rec.sid] then
+				table.insert(sets, { op = "set", rec = rec, base = ev.base })
+			else
+				local parent = resolveParent(rec.parent, index)
+				if parent then
+					local inst = createInstance(rec.cls, rec)
+					breathe()
+					if inst then
+						inst.Name = rec.name
+						applyProps(inst, rec.props)
+						inst:SetAttribute(SID_ATTR, rec.sid)
+						inst.Parent = parent
+						index[rec.sid] = inst
+					end
+				else
+					table.insert(stillWaiting, ev)
+				end
+			end
+		end
+		if #stillWaiting == #remaining then break end
+		remaining = stillWaiting
+	end
+	for _, ev in ipairs(remaining) do
+		logError("не нашёл родителя для %s — пропустил", ev.rec.name)
+	end
+
+	-- Изменения
+	for _, ev in ipairs(sets) do
+		local rec = ev.rec
+		local inst = index[rec.sid]
+		if inst then
+			local mine = localSnap[rec.sid]
+			local base = baseline[rec.sid]
+			-- Конфликт: и мы, и они правили одно и то же с общей точки.
+			local iChanged = mine and base and mine.hash ~= base.hash
+			local theyMoved = ev.base and base and ev.base ~= base.hash
+			if iChanged and (theyMoved or (mine and mine.hash ~= rec.hash)) then
+				table.insert(conflicts, {
+					sid = rec.sid, name = rec.name, cls = rec.cls,
+					theirs = rec, author = authorOfBatch,
+				})
+			else
+				inst.Name = rec.name
+				applyProps(inst, rec.props)
+				local parent = resolveParent(rec.parent, index)
+				if parent and inst.Parent ~= parent then
+					inst.Parent = parent
+				end
+			end
+		end
+	end
+
+	-- Ссылки между объектами — когда все цели уже созданы.
+	flushRefs(index)
+
+	-- Удаления: сначала самые глубокие. Сортировка по номеру бессмысленна —
+	-- считаем настоящую глубину в дереве, иначе родителя сносим раньше детей
+	-- и до них уже не дотянуться.
+	local function depth(sid)
+		local inst = index[sid]
+		local d, guard_ = 0, 0
+		while inst and inst.Parent and guard_ < 100 do
+			d += 1
+			guard_ += 1
+			inst = inst.Parent
+		end
+		return d
+	end
+	table.sort(dels, function(a, b) return depth(a.sid) > depth(b.sid) end)
+	for _, ev in ipairs(dels) do
+		local inst = index[ev.sid]
+		if inst then
+			pcall(function() inst.Parent = nil end)
+			index[ev.sid] = nil
+		end
+	end
+
+	return conflicts
+end
+
+--==============================================================
+-- Транспорт: свой сервер
+--==============================================================
+Apply.applyProps  = applyProps
+Apply.flushRefs   = flushRefs
+Apply.applyEvents = applyEvents
+
+return Apply
+
+end)()
+
+-- ======================= Net =======================
+local __Net = (function()
+-- Разговор с сервером. Единственное место, которое знает про HTTP.
+
+local HttpService = game:GetService("HttpService")
+local Config = __Config
+
+local MAX_FEED_CHAR = Config.MAX_FEED_CHAR
+
+local Net = {}
+
+-- Адрес и ключ приходят снаружи: модуль их только использует.
+local cfg = { server = "", key = "" }
+
+function Net.configure(server, key)
+	cfg.server = server or ""
+	cfg.key = key or ""
+end
+
+local function serverUrl(path)
+	local base = cfg.server
+	if not base:match("^https?://") then base = "http://" .. base end
+	base = base:gsub("/+$", "")
+	return base .. path
+end
+
+-- Общий разбор ответа. Возвращает: тело, текст ошибки.
+local function talk(method, path, body)
+	local headers = { ["x-russteam-key"] = cfg.key }
+	if body then headers["Content-Type"] = "application/json" end
+	local ok, res = pcall(function()
+		return HttpService:RequestAsync({
+			Url = serverUrl(path),
+			Method = method,
+			Headers = headers,
+			Body = body,
+		})
+	end)
+	if not ok then
+		return nil, "сервер недоступен: " .. tostring(res):sub(1, 120)
+	end
+	if res.StatusCode == 0 then
+		return nil, "сервер не ответил"
+	end
+	local okJson, parsed = pcall(function() return HttpService:JSONDecode(res.Body) end)
+	if not okJson then
+		local text = tostring(res.Body)
+		-- Веб-страница вместо ответа почти всегда значит «адрес ведёт не туда».
+		if text:sub(1, 1) == "<" then
+			return nil, string.format("по адресу отвечает веб-страница, а не RussTeam (код %d). "
+				.. "Проверь адрес и порт", res.StatusCode)
+		end
+		return nil, string.format("ответ %d, не разобрал: %s", res.StatusCode, text:sub(1, 100))
+	end
+	if res.StatusCode == 401 then
+		return nil, "сервер не принял ключ доступа"
+	end
+	if res.StatusCode == 429 then
+		return nil, "слишком частые запросы, подожди минуту"
+	end
+	if res.StatusCode ~= 200 or parsed.ok == false then
+		return nil, tostring(parsed.error or ("ответ " .. res.StatusCode))
+	end
+	return parsed, nil
+end
+
+local function post(path, tbl)
+	local okEnc, body = pcall(function() return HttpService:JSONEncode(tbl) end)
+	if not okEnc then return nil, "не собрал запрос" end
+	if #body > MAX_FEED_CHAR then
+		return nil, string.format("слишком много за раз (%.1f МБ). Отправляй чаще", #body / 1048576)
+	end
+	return talk("POST", path, body)
+end
+
+--==============================================================
+-- Кто в канале
+--==============================================================
+
+Net.talk = talk
+Net.post = post
+
+return Net
+
+end)()
+
+-- ======================= Panel =======================
+local __Panel = (function()
+-- Панель RussTeam. Ничего не решает: показывает состояние S
+-- и сообщает о нажатиях через обработчики H.
+
+local Selection  = game:GetService("Selection")
+local RunService = game:GetService("RunService")
+local Config = __Config
+
+local LOGO     = Config.LOGO
+local LOGO_ON  = Config.LOGO_ON
+local LOGO_OFF = Config.LOGO_OFF
+local VERSION    = Config.VERSION
+local IDLE_AFTER = Config.IDLE_AFTER
+
+local Panel = {}
+
+-- Состояние и обработчики подставляет главный скрипт
+local S = {
+	connected = false, statusText = "не подключен", meName = "?", meId = 0,
+	roster = {}, history = {}, conflicts = {}, bigPending = nil,
+	autoOn = true, myPending = 0, presenceNote = nil, devShown = false,
+}
+local H = {}
+
+local function agoText(ts)
+	if not ts then return "давно" end
+	local d = os.time() - ts
+	if d < 90 then return "сейчас" end
+	if d < 3600 then return string.format("%d мин назад", math.floor(d / 60)) end
+	if d < 86400 then return string.format("%d ч назад", math.floor(d / 3600)) end
+	return string.format("%d дн назад", math.floor(d / 86400))
+end
+
+function Panel.create(plugin, state, handlers)
+	S = state
+	H = handlers
+
+-- Интерфейс
+--==============================================================
+
+local toolbar = plugin:CreateToolbar("RussTeam")
+
+-- Кнопку делаем первой. Если что-то ниже сломается на другой версии Studio,
+-- она всё равно будет на месте — иначе плагин пропадает молча.
+local openBtn = toolbar:CreateButton("RussTeam", "Перенос изменений между проектами", LOGO_OFF)
+openBtn.ClickableWhenViewportHidden = true
+
+local widget = plugin:CreateDockWidgetPluginGui(
+	"RussTeamPanel",
+	DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Right, false, false, 340, 560, 300, 380)
+)
+widget.Title = "RussTeam"
+
+local BG     = Color3.fromRGB(28, 33, 44)
+local PANEL  = Color3.fromRGB(41, 47, 60)
+local FIELD  = Color3.fromRGB(35, 40, 52)
+local TEXT   = Color3.fromRGB(238, 241, 246)
+local MUTED  = Color3.fromRGB(140, 149, 166)
+local BLUE   = Color3.fromRGB(58, 122, 224)
+local GREEN  = Color3.fromRGB(66, 160, 96)
+local WARN   = Color3.fromRGB(220, 160, 60)
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.fromScale(1, 1)
+scroll.BackgroundColor3 = BG
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 5
+scroll.CanvasSize = UDim2.new()
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.Parent = widget
+
+local root = Instance.new("Frame")
+root.Size = UDim2.new(1, 0, 0, 0)
+root.AutomaticSize = Enum.AutomaticSize.Y
+root.BackgroundTransparency = 1
+root.Parent = scroll
+
+do
+	local l = Instance.new("UIListLayout")
+	l.Padding = UDim.new(0, 6)
+	l.SortOrder = Enum.SortOrder.LayoutOrder
+	l.Parent = root
+	local p = Instance.new("UIPadding")
+	p.PaddingTop = UDim.new(0, 10)
+	p.PaddingLeft = UDim.new(0, 10)
+	p.PaddingRight = UDim.new(0, 10)
+	p.PaddingBottom = UDim.new(0, 12)
+	p.Parent = root
+end
+
+local order = 0
+local function nextOrder()
+	order += 1
+	return order
+end
+
+local function corner(inst, r)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r or 6)
+	c.Parent = inst
+end
+
+local function label(text, color, size, bold)
+	local l = Instance.new("TextLabel")
+	l.Size = UDim2.new(1, 0, 0, size or 18)
+	l.BackgroundTransparency = 1
+	l.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
+	l.TextSize = bold and 13 or 12
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextColor3 = color or TEXT
+	l.Text = text
+	l.TextWrapped = true
+	l.LayoutOrder = nextOrder()
+	l.Parent = root
+	return l
+end
+
+local function button(text, color, height)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, 0, 0, height or 32)
+	b.BackgroundColor3 = color or PANEL
+	b.BorderSizePixel = 0
+	b.Font = Enum.Font.GothamMedium
+	b.TextSize = 13
+	b.TextColor3 = TEXT
+	b.Text = text
+	b.LayoutOrder = nextOrder()
+	b.Parent = root
+	corner(b)
+	return b
+end
+
+local function field(placeholder, settingKey)
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(1, 0, 0, 28)
+	box.BackgroundColor3 = FIELD
+	box.BorderSizePixel = 0
+	box.Font = Enum.Font.Code
+	box.TextSize = 12
+	box.TextColor3 = TEXT
+	box.PlaceholderText = placeholder
+	box.PlaceholderColor3 = MUTED
+	box.ClearTextOnFocus = false
+	box.TextXAlignment = Enum.TextXAlignment.Left
+	box.Text = plugin:GetSetting(settingKey) or ""
+	box.LayoutOrder = nextOrder()
+	box.Parent = root
+	corner(box, 4)
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 8)
+	pad.Parent = box
+	-- Сохраняем на каждое изменение текста, а не только при потере фокуса:
+	-- иначе вписал, сразу нажал «Подключиться» — и значение не запомнилось.
+	local function remember()
+		local value = box.Text:gsub("^%s+", ""):gsub("%s+$", "")
+		if value ~= (plugin:GetSetting(settingKey) or "") then
+			plugin:SetSetting(settingKey, value)
+		end
+	end
+	box:GetPropertyChangedSignal("Text"):Connect(remember)
+	box.FocusLost:Connect(remember)
+	return box
+end
+
+-- шапка с логотипом и лампочкой состояния
+local dot, whoLbl
+do
+	local head = Instance.new("Frame")
+	head.Size = UDim2.new(1, 0, 0, 42)
+	head.BackgroundTransparency = 1
+	head.LayoutOrder = nextOrder()
+	head.Parent = root
+
+	local logo = Instance.new("ImageLabel")
+	logo.Size = UDim2.fromOffset(34, 34)
+	logo.BackgroundTransparency = 1
+	logo.Image = LOGO
+	logo.Parent = head
+
+	local n = Instance.new("TextLabel")
+	n.Size = UDim2.new(1, -60, 0, 20)
+	n.Position = UDim2.fromOffset(44, 2)
+	n.BackgroundTransparency = 1
+	n.Font = Enum.Font.GothamBold
+	n.TextSize = 16
+	n.TextXAlignment = Enum.TextXAlignment.Left
+	n.TextColor3 = TEXT
+	n.Text = "RussTeam"
+	n.Parent = head
+
+	whoLbl = Instance.new("TextLabel")
+	whoLbl.Size = UDim2.new(1, -60, 0, 14)
+	whoLbl.Position = UDim2.fromOffset(44, 22)
+	whoLbl.BackgroundTransparency = 1
+	whoLbl.Font = Enum.Font.Gotham
+	whoLbl.TextSize = 11
+	whoLbl.TextXAlignment = Enum.TextXAlignment.Left
+	whoLbl.TextColor3 = MUTED
+	whoLbl.Text = "не подключен"
+	whoLbl.Parent = head
+
+	dot = Instance.new("Frame")
+	dot.Size = UDim2.fromOffset(10, 10)
+	dot.Position = UDim2.new(1, -12, 0, 12)
+	dot.BackgroundColor3 = MUTED
+	dot.BorderSizePixel = 0
+	dot.Parent = head
+	corner(dot, 5)
+end
+
+-- Крупная полоса состояния: видно с одного взгляда, не читая текст
+local banner, bannerMain, bannerSub
+do
+	banner = Instance.new("Frame")
+	banner.Size = UDim2.new(1, 0, 0, 46)
+	banner.BackgroundColor3 = PANEL
+	banner.BorderSizePixel = 0
+	banner.LayoutOrder = nextOrder()
+	banner.Parent = root
+	corner(banner)
+
+	local stripe = Instance.new("Frame")
+	stripe.Name = "Stripe"
+	stripe.Size = UDim2.new(0, 4, 1, -12)
+	stripe.Position = UDim2.fromOffset(0, 6)
+	stripe.BackgroundColor3 = MUTED
+	stripe.BorderSizePixel = 0
+	stripe.Parent = banner
+	corner(stripe, 2)
+
+	bannerMain = Instance.new("TextLabel")
+	bannerMain.Size = UDim2.new(1, -22, 0, 20)
+	bannerMain.Position = UDim2.fromOffset(14, 5)
+	bannerMain.BackgroundTransparency = 1
+	bannerMain.Font = Enum.Font.GothamBold
+	bannerMain.TextSize = 14
+	bannerMain.TextXAlignment = Enum.TextXAlignment.Left
+	bannerMain.TextColor3 = MUTED
+	bannerMain.Text = "НЕ ПОДКЛЮЧЕН"
+	bannerMain.Parent = banner
+
+	bannerSub = Instance.new("TextLabel")
+	bannerSub.Size = UDim2.new(1, -22, 0, 16)
+	bannerSub.Position = UDim2.fromOffset(14, 24)
+	bannerSub.BackgroundTransparency = 1
+	bannerSub.Font = Enum.Font.Gotham
+	bannerSub.TextSize = 11
+	bannerSub.TextXAlignment = Enum.TextXAlignment.Left
+	bannerSub.TextTruncate = Enum.TextTruncate.AtEnd
+	bannerSub.TextColor3 = MUTED
+	bannerSub.Text = "введи ключ и канал"
+	bannerSub.Parent = banner
+end
+
+label("Канал — общий код у обоих", MUTED)
+local chanBox = field("RUSSTEAM-7K4M-92XQ", "channel")
+
+local hintLbl = label("", WARN, 46)
+hintLbl.Text = "Плагину нужен свой сервер-посредник: файл server.py из комплекта, "
+	.. "поднимается на любой машине за пару минут. Адрес и ключ впиши ниже."
+
+local advBtn = button("Показать: сервер и ключ")
+local uniLbl = label("адрес сервера, например http://12.34.56.78:8770", MUTED)
+local srvBox = field("http://адрес:8770", "server")
+local keyLbl = label("ключ доступа к серверу", MUTED)
+local keyBox = field("rt_...", "key")
+
+local connectBtn = button("Подключиться", BLUE, 38)
+local statusLbl = label("не подключен", MUTED, 32)
+
+label("Кто в канале", MUTED, 18, true)
+local peopleFrame = Instance.new("Frame")
+peopleFrame.Size = UDim2.new(1, 0, 0, 0)
+peopleFrame.AutomaticSize = Enum.AutomaticSize.Y
+peopleFrame.BackgroundColor3 = PANEL
+peopleFrame.BorderSizePixel = 0
+peopleFrame.LayoutOrder = nextOrder()
+peopleFrame.Parent = root
+corner(peopleFrame)
+do
+	local l = Instance.new("UIListLayout")
+	l.Padding = UDim.new(0, 2)
+	l.SortOrder = Enum.SortOrder.LayoutOrder
+	l.Parent = peopleFrame
+	local p = Instance.new("UIPadding")
+	p.PaddingTop = UDim.new(0, 6)
+	p.PaddingBottom = UDim.new(0, 6)
+	p.PaddingLeft = UDim.new(0, 8)
+	p.PaddingRight = UDim.new(0, 8)
+	p.Parent = peopleFrame
+end
+
+local devBtn = button("Показать подробности")
+local histLbl = label("Что происходит", MUTED, 18, true)
+local histFrame = Instance.new("Frame")
+histFrame.Size = UDim2.new(1, 0, 0, 0)
+histFrame.AutomaticSize = Enum.AutomaticSize.Y
+histFrame.BackgroundColor3 = PANEL
+histFrame.BorderSizePixel = 0
+histFrame.LayoutOrder = nextOrder()
+histFrame.Parent = root
+corner(histFrame)
+do
+	local l = Instance.new("UIListLayout")
+	l.Padding = UDim.new(0, 2)
+	l.SortOrder = Enum.SortOrder.LayoutOrder
+	l.Parent = histFrame
+	local p = Instance.new("UIPadding")
+	p.PaddingTop = UDim.new(0, 6)
+	p.PaddingBottom = UDim.new(0, 6)
+	p.PaddingLeft = UDim.new(0, 8)
+	p.PaddingRight = UDim.new(0, 8)
+	p.Parent = histFrame
+end
+
+local bigBtn = button("Принять большую пачку", WARN)
+
+local conflictLbl = label("Конфликты", MUTED, 18, true)
+local conflictFrame = Instance.new("Frame")
+conflictFrame.Size = UDim2.new(1, 0, 0, 0)
+conflictFrame.AutomaticSize = Enum.AutomaticSize.Y
+conflictFrame.BackgroundColor3 = PANEL
+conflictFrame.BorderSizePixel = 0
+conflictFrame.LayoutOrder = nextOrder()
+conflictFrame.Parent = root
+corner(conflictFrame)
+do
+	local l = Instance.new("UIListLayout")
+	l.Padding = UDim.new(0, 2)
+	l.Parent = conflictFrame
+	local p = Instance.new("UIPadding")
+	p.PaddingTop = UDim.new(0, 6)
+	p.PaddingBottom = UDim.new(0, 6)
+	p.PaddingLeft = UDim.new(0, 8)
+	p.PaddingRight = UDim.new(0, 8)
+	p.Parent = conflictFrame
+end
+
+-- внизу: ручной обмен и переключатель живого режима
+local syncBtn = button("Обменяться сейчас")
+local autoBtn = button("Живой режим: включён", GREEN)
+
+-- Служебное показываем только по просьбе: в обычной работе панель должна
+-- отвечать на один вопрос — идёт обмен или нет.
+local function setDev(on)
+	S.devShown = on
+	histLbl.Visible = on
+	histFrame.Visible = on
+	conflictLbl.Visible = on or (#S.conflicts > 0)
+	conflictFrame.Visible = on or (#S.conflicts > 0)
+	syncBtn.Visible = on and S.connected
+	devBtn.Text = on and "Скрыть подробности" or "Показать подробности"
+end
+devBtn.MouseButton1Click:Connect(function() setDev(not S.devShown) end)
+
+-- Адрес сервера прячем: он нужен раз в жизни
+local advShown = false
+local function setAdvanced(on)
+	advShown = on
+	uniLbl.Visible = on
+	srvBox.Visible = on
+	keyLbl.Visible = on
+	keyBox.Visible = on
+	hintLbl.Visible = (srvBox.Text == "" or keyBox.Text == "")
+	advBtn.Text = on and "Скрыть: сервер и ключ" or "Показать: сервер и ключ"
+end
+advBtn.MouseButton1Click:Connect(function() setAdvanced(not advShown) end)
+setAdvanced(srvBox.Text == "" or keyBox.Text == "")
+setDev(false)
+
+--==============================================================
+-- Перерисовка
+--==============================================================
+
+local function emptyRow(parent, text)
+	local f = Instance.new("Frame")
+	f.Size = UDim2.new(1, 0, 0, 22)
+	f.BackgroundTransparency = 1
+	f.Parent = parent
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.Font = Enum.Font.Gotham
+	t.TextSize = 12
+	t.TextColor3 = MUTED
+	t.TextXAlignment = Enum.TextXAlignment.Left
+	t.Text = text
+	t.Parent = f
+end
+
+-- Кто из напарников сейчас за работой: недавно отмечался и у него есть неотправленное.
+local function activePeers()
+	local list, now = {}, os.time()
+	for id, rec in pairs(S.roster) do
+		if type(rec) == "table" and id ~= tostring(S.meId) then
+			local fresh = rec.at and (now - rec.at) < IDLE_AFTER
+			if fresh and (rec.pending or 0) > 0 then
+				table.insert(list, rec.name or id)
+			end
+		end
+	end
+	return list
+end
+
+local function onlinePeers()
+	local n, now = 0, os.time()
+	for id, rec in pairs(S.roster) do
+		if type(rec) == "table" and id ~= tostring(S.meId)
+			and rec.at and (now - rec.at) < IDLE_AFTER then
+			n += 1
+		end
+	end
+	return n
+end
+
+local function refreshStatus()
+	statusLbl.Text = S.statusText
+	hintLbl.Visible = not S.connected and (srvBox.Text == "" or keyBox.Text == "")
+	statusLbl.TextColor3 = S.connected and TEXT or MUTED
+	dot.BackgroundColor3 = S.connected and GREEN or MUTED
+	whoLbl.Text = S.connected and ("подключен как " .. S.meName) or "не подключен"
+	connectBtn.Text = S.connected and "Отключиться" or "Подключиться"
+	connectBtn.BackgroundColor3 = S.connected and PANEL or BLUE
+	syncBtn.Visible = S.connected and S.devShown
+	autoBtn.Visible = S.connected
+	conflictLbl.Visible = S.devShown or (#S.conflicts > 0)
+	conflictFrame.Visible = S.devShown or (#S.conflicts > 0)
+	bigBtn.Visible = S.bigPending ~= nil
+	if S.bigPending then
+		bigBtn.Text = string.format("Принять %d изменений", S.bigPending.count)
+	end
+	autoBtn.Text = S.autoOn and "Живой режим: включён" or "Живой режим: выключен"
+	autoBtn.BackgroundColor3 = S.autoOn and GREEN or PANEL
+
+	local stripe = banner:FindFirstChild("Stripe")
+	if not S.connected then
+		bannerMain.Text = "НЕ ПОДКЛЮЧЕН"
+		bannerMain.TextColor3 = MUTED
+		bannerSub.Text = "изменения никуда не уходят"
+		bannerSub.TextColor3 = MUTED
+		if stripe then stripe.BackgroundColor3 = MUTED end
+		banner.BackgroundColor3 = PANEL
+		if openBtn then openBtn.Icon = LOGO_OFF end
+		return
+	end
+
+	local busyList = activePeers()
+	local online = onlinePeers()
+
+	if #busyList > 0 then
+		bannerMain.Text = "СЕЙЧАС РАБОТАЮТ"
+		bannerMain.TextColor3 = WARN
+		bannerSub.Text = table.concat(busyList, ", ") .. " правит проект прямо сейчас"
+		bannerSub.TextColor3 = WARN
+		if stripe then stripe.BackgroundColor3 = WARN end
+		banner.BackgroundColor3 = Color3.fromRGB(56, 48, 34)
+	else
+		bannerMain.Text = "ПОДКЛЮЧЕН"
+		bannerMain.TextColor3 = GREEN
+		bannerSub.TextColor3 = MUTED
+		if online > 0 then
+			bannerSub.Text = string.format("в канале ещё %d, сейчас никто не правит", online)
+		else
+			bannerSub.Text = "в канале только ты"
+		end
+		if stripe then stripe.BackgroundColor3 = GREEN end
+		banner.BackgroundColor3 = Color3.fromRGB(30, 46, 38)
+	end
+
+	if S.myPending > 0 then
+		bannerSub.Text = bannerSub.Text .. string.format("  ·  у тебя %d неотправленных", S.myPending)
+	end
+	bannerSub.Text = bannerSub.Text .. (S.autoOn and "  ·  живой режим" or "  ·  вручную")
+	if not RunService:IsEdit() then
+		bannerMain.Text = "ИДЁТ ЗАПУСК ИГРЫ"
+		bannerMain.TextColor3 = MUTED
+		bannerSub.Text = "обмен приостановлен, останови игру"
+		local st = banner:FindFirstChild("Stripe")
+		if st then st.BackgroundColor3 = MUTED end
+	end
+	if openBtn then openBtn.Icon = LOGO_ON end
+end
+
+local function refreshPeople()
+	for _, ch in ipairs(peopleFrame:GetChildren()) do
+		if ch:IsA("Frame") then ch:Destroy() end
+	end
+
+	-- Короткое сообщение о том, кто только что пришёл или ушёл.
+	if S.presenceNote then
+		local f = Instance.new("Frame")
+		f.Size = UDim2.new(1, 0, 0, 20)
+		f.BackgroundTransparency = 1
+		f.LayoutOrder = 0
+		f.Parent = peopleFrame
+		local t = Instance.new("TextLabel")
+		t.Size = UDim2.fromScale(1, 1)
+		t.BackgroundTransparency = 1
+		t.Font = Enum.Font.Gotham
+		t.TextSize = 11
+		t.TextColor3 = MUTED
+		t.TextXAlignment = Enum.TextXAlignment.Left
+		t.TextTruncate = Enum.TextTruncate.AtEnd
+		t.Text = S.presenceNote
+		t.Parent = f
+	end
+
+	-- В списке только те, кто сейчас на месте. Ушедших не показываем:
+	-- иначе через неделю тут кладбище из старых имён.
+	local now = os.time()
+	local n = 0
+	for id, rec in pairs(S.roster) do
+		if type(rec) == "table" and rec.at and (now - rec.at) < IDLE_AFTER then
+			n += 1
+			local isMe = (id == tostring(S.meId))
+			local working = (rec.pending or 0) > 0
+			local colour = working and WARN or GREEN
+			local state = working and "правит проект" or "на месте"
+
+			local f = Instance.new("Frame")
+			f.Size = UDim2.new(1, 0, 0, 22)
+			f.BackgroundTransparency = 1
+			f.LayoutOrder = n
+			f.Parent = peopleFrame
+
+			local d = Instance.new("Frame")
+			d.Size = UDim2.fromOffset(8, 8)
+			d.Position = UDim2.fromOffset(0, 7)
+			d.BackgroundColor3 = colour
+			d.BorderSizePixel = 0
+			d.Parent = f
+			corner(d, 4)
+
+			local t = Instance.new("TextLabel")
+			t.Size = UDim2.new(1, -14, 1, 0)
+			t.Position = UDim2.fromOffset(14, 0)
+			t.BackgroundTransparency = 1
+			t.Font = working and Enum.Font.GothamMedium or Enum.Font.Gotham
+			t.TextSize = 12
+			t.TextXAlignment = Enum.TextXAlignment.Left
+			t.TextTruncate = Enum.TextTruncate.AtEnd
+			t.TextColor3 = isMe and MUTED or (working and WARN or TEXT)
+			t.Text = string.format("%s%s — %s", rec.name or id, isMe and " (ты)" or "", state)
+			t.Parent = f
+		end
+	end
+	if n == 0 then emptyRow(peopleFrame, "никого") end
+end
+
+local function refreshHistory()
+	for _, ch in ipairs(histFrame:GetChildren()) do
+		if ch:IsA("Frame") then ch:Destroy() end
+	end
+	if #S.history == 0 then
+		emptyRow(histFrame, "пока ничего")
+		return
+	end
+	for i, item in ipairs(S.history) do
+		if i > 12 then break end
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 20)
+		row.BackgroundTransparency = 1
+		row.LayoutOrder = i
+		row.Parent = histFrame
+
+		local t = Instance.new("TextLabel")
+		t.Size = UDim2.fromScale(1, 1)
+		t.BackgroundTransparency = 1
+		t.Font = Enum.Font.Gotham
+		t.TextSize = 12
+		t.TextXAlignment = Enum.TextXAlignment.Left
+		t.TextTruncate = Enum.TextTruncate.AtEnd
+		t.TextColor3 = (i == 1) and TEXT or MUTED
+		t.Text = string.format("%s  ·  %s", os.date("%H:%M", item.at), item.text)
+		t.Parent = row
+	end
+end
+
+local function refreshConflicts()
+	for _, ch in ipairs(conflictFrame:GetChildren()) do
+		if ch:IsA("Frame") then ch:Destroy() end
+	end
+	if #S.conflicts == 0 then
+		emptyRow(conflictFrame, "нет")
+		return
+	end
+	for i, entry in ipairs(S.conflicts) do
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 50)
+		row.BackgroundTransparency = 1
+		row.LayoutOrder = i
+		row.Parent = conflictFrame
+
+		local t = Instance.new("TextLabel")
+		t.Size = UDim2.new(1, 0, 0, 20)
+		t.BackgroundTransparency = 1
+		t.Font = Enum.Font.GothamMedium
+		t.TextSize = 12
+		t.TextXAlignment = Enum.TextXAlignment.Left
+		t.TextColor3 = WARN
+		t.TextTruncate = Enum.TextTruncate.AtEnd
+		t.Text = entry.name .. " (" .. entry.cls .. ")"
+		t.Parent = row
+
+		local function small(text, x, w, cb)
+			local b = Instance.new("TextButton")
+			b.Size = UDim2.fromOffset(w, 22)
+			b.Position = UDim2.fromOffset(x, 22)
+			b.BackgroundColor3 = FIELD
+			b.BorderSizePixel = 0
+			b.Font = Enum.Font.Gotham
+			b.TextSize = 11
+			b.TextColor3 = TEXT
+			b.Text = text
+			b.Parent = row
+			corner(b, 4)
+			b.MouseButton1Click:Connect(cb)
+		end
+		small("Взять чужое", 0, 88, function()
+			local _, index = H.scan()
+			local inst = index[entry.sid]
+			if inst then
+				inst.Name = entry.theirs.name
+				H.applyProps(inst, entry.theirs.props)
+				H.flushRefs(index)
+			end
+			table.remove(S.conflicts, i)
+			refreshConflicts()
+		end)
+		small("Оставить своё", 92, 94, function()
+			table.remove(S.conflicts, i)
+			refreshConflicts()
+		end)
+		small("Найти", 190, 54, function()
+			local _, index = H.scan()
+			local inst = index[entry.sid]
+			if inst then Selection:Set({ inst }) end
+		end)
+	end
+end
+
+local function refreshAll()
+	refreshStatus()
+	refreshPeople()
+	refreshHistory()
+	refreshConflicts()
+end
+
+	--==============================================================
+	-- Нажатия: панель только сообщает о них наружу
+	--==============================================================
+
+	connectBtn.MouseButton1Click:Connect(function()
+		if H.onConnect then H.onConnect() end
+	end)
+	syncBtn.MouseButton1Click:Connect(function()
+		if H.onSync then H.onSync() end
+	end)
+	autoBtn.MouseButton1Click:Connect(function()
+		if H.onToggleAuto then H.onToggleAuto() end
+	end)
+	bigBtn.MouseButton1Click:Connect(function()
+		if H.onAcceptBig then H.onAcceptBig() end
+	end)
+	openBtn.Click:Connect(function()
+		widget.Enabled = not widget.Enabled
+		openBtn:SetActive(widget.Enabled)
+	end)
+	openBtn:SetActive(widget.Enabled)
+
+	-- отдаём наружу то, что нужно главному скрипту
+	Panel.refresh = refreshAll
+	Panel.fields = function()
+		return chanBox.Text, srvBox.Text, keyBox.Text
+	end
+	Panel.setFields = function(chan, srv, key)
+		if chan then chanBox.Text = chan end
+		if srv then srvBox.Text = srv end
+		if key then keyBox.Text = key end
+	end
+	Panel.widget = widget
+	Panel.showSetup = setAdvanced
+
+	refreshAll()
+	return Panel
+end
+
+return Panel
+
+end)()
+
+-- ======================= главный =======================
+-- RussTeam — перенос изменений между разными проектами Roblox Studio.
+--
+-- Этот файл только связывает части:
+--   Config     — пределы, списки классов и свойств
+--   Serialize  — свойства в JSON и обратно
+--   Tree       — обход проекта и сравнение снимков
+--   Apply      — применение чужих изменений
+--   Net        — разговор с сервером
+--   Panel      — панель в Studio
+--
+-- Настройки живут в Config, а не здесь.
+
+local HttpService   = game:GetService("HttpService")
+local ChangeHistory = game:GetService("ChangeHistoryService")
+local StudioService = game:GetService("StudioService")
+local Players       = game:GetService("Players")
+local RunService    = game:GetService("RunService")
+
+local Config    = __Config
+local Serialize = __Serialize
+local Tree      = __Tree
+local Apply     = __Apply
+local Net       = __Net
+local Panel     = __Panel
+
+local VERSION       = Config.VERSION
+local AUTO_TICK     = Config.AUTO_TICK
+local TICK_MAX      = Config.TICK_MAX
+local CHUNK_EVENTS  = Config.CHUNK_EVENTS
+local MAX_CONFLICTS = Config.MAX_CONFLICTS
+local BIG_CHANGE    = Config.BIG_CHANGE
+local MAX_INSTANCES = Config.MAX_INSTANCES
+local VERBOSE       = Config.VERBOSE
+
+--==============================================================
+-- Состояние
+--==============================================================
+
+local S = {
+	connected    = false,
+	statusText   = "не подключен",
+	meId         = 0,
+	meName       = "?",
+	roster       = {},
+	history      = {},
+	conflicts    = {},
+	bigPending   = nil,
+	autoOn       = true,
+	myPending    = 0,
+	presenceNote = nil,
+	devShown     = false,
+}
+
+local cfg          = { server = "", key = "", channel = "" }
+local knownIds     = {}
+local cursors      = {}
+local lastSnapshot = {}
+local bigApproved  = false
+local busy         = false
+local tick         = AUTO_TICK
+
+local function log(fmt, ...)
+	if VERBOSE then print("[RussTeam] " .. string.format(fmt, ...)) end
+end
+
+local function logError(fmt, ...)
+	warn("[RussTeam] " .. string.format(fmt, ...))
+end
+
+local function addHistory(text)
+	table.insert(S.history, 1, { at = os.time(), text = text })
+	while #S.history > 30 do table.remove(S.history) end
+end
+
+local function safeId(v)
+	return (tostring(v):gsub("[^%w%-_]", "_"))
+end
+
+local function whoAmI()
+	local ok, id = pcall(function() return StudioService:GetUserId() end)
+	S.meId = (ok and id and id > 0) and id or 0
+	local okName, name = pcall(function() return Players:GetNameFromUserIdAsync(S.meId) end)
+	if okName and name then
+		S.meName = name
+	elseif S.meId > 0 then
+		S.meName = "id" .. tostring(S.meId)
+	else
+		local saved = plugin:GetSetting("anonId")
+		if not saved then
+			saved = math.random(100000, 999999)
+			plugin:SetSetting("anonId", saved)
+		end
+		S.meId = saved
+		S.meName = "гость-" .. tostring(saved)
+	end
+end
+
+Apply.setErrorSink(logError)
+
+--==============================================================
+-- Кто в канале
+--==============================================================
+
+-- Кто пришёл и кто ушёл. Сообщение короткое и живёт минуту, потом гаснет —
+-- список участников и без него говорит, кто на месте.
+local NOTE_LIFE = 60
+local noteAt = 0
+
+local function notePresence(list)
+	local now = os.time()
+	local came, gone = {}, {}
+
+	for id, rec in pairs(list) do
+		local active = type(rec) == "table" and rec.at and (now - rec.at) < Config.IDLE_AFTER
+		local name = (type(rec) == "table" and rec.name) or id
+		if id ~= tostring(S.meId) then
+			if active and not knownIds[id] then
+				table.insert(came, name)
+				knownIds[id] = name
+			elseif not active and knownIds[id] then
+				table.insert(gone, knownIds[id])
+				knownIds[id] = nil
+			end
+		end
+	end
+
+	-- пропавших из переклички совсем тоже считаем ушедшими
+	for id, name in pairs(knownIds) do
+		if list[id] == nil then
+			table.insert(gone, name)
+			knownIds[id] = nil
+		end
+	end
+
+	local parts = {}
+	if #came > 0 then
+		table.insert(parts, table.concat(came, ", ") .. (#came == 1 and " подключился" or " подключились"))
+	end
+	if #gone > 0 then
+		table.insert(parts, table.concat(gone, ", ") .. (#gone == 1 and " отключился" or " отключились"))
+	end
+	if #parts > 0 then
+		S.presenceNote = table.concat(parts, ", ")
+		noteAt = now
+		addHistory(S.presenceNote)
+	elseif S.presenceNote and (now - noteAt) > NOTE_LIFE then
+		S.presenceNote = nil
+	end
+end
+
+--==============================================================
+-- Приём и применение
+--==============================================================
+
+local function saveCursors()
+	local ok, enc = pcall(function() return HttpService:JSONEncode(cursors) end)
+	if ok then plugin:SetSetting("cursors_" .. safeId(cfg.channel), enc) end
+end
+
+local function applyBatches(batches)
+	local events, byAuthor = {}, {}
+	for _, b in ipairs(batches) do
+		local owner = tostring(b.author)
+		byAuthor[owner] = math.max(byAuthor[owner] or 0, b.n or 0)
+		for _, ev in ipairs(b.events or {}) do
+			table.insert(events, ev)
+		end
+	end
+	if #events == 0 then return 0, {} end
+
+	-- Предохранитель: очень большую пачку сразу не применяем, иначе один
+	-- сбойный обмен молча снесёт полпроекта.
+	if #events > BIG_CHANGE and not bigApproved then
+		S.bigPending = { batches = batches, count = #events }
+		S.statusText = string.format("подключен · пришло сразу %d изменений — подтверди внизу", #events)
+		return 0, {}
+	end
+	bigApproved = false
+	S.bigPending = nil
+
+	local recording = ChangeHistory:TryBeginRecording("RussTeam: приём изменений")
+	local localSnap, index = Tree.scan()
+	Apply.setBaseline(lastSnapshot)
+	local got = Apply.applyEvents(events, localSnap, index, "напарник")
+	if recording then
+		ChangeHistory:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
+	end
+
+	for owner, n in pairs(byAuthor) do
+		cursors[owner] = math.max(cursors[owner] or 0, n)
+	end
+	saveCursors()
+
+	-- Один объект не должен попадать в список конфликтов дважды.
+	for _, c in ipairs(got) do
+		local dup = false
+		for _, have in ipairs(S.conflicts) do
+			if have.sid == c.sid then dup = true break end
+		end
+		if not dup then table.insert(S.conflicts, c) end
+	end
+	while #S.conflicts > MAX_CONFLICTS do table.remove(S.conflicts, 1) end
+
+	lastSnapshot = (Tree.scan())
+	return #events - #got, got
+end
+
+--==============================================================
+-- Один оборот обмена
+--==============================================================
+
+local function syncOnce(manual)
+	if not RunService:IsEdit() then
+		S.statusText = "подключен · идёт запуск игры, обмен на паузе"
+		return
+	end
+
+	local snap, _, count = Tree.scan()
+	local events = Tree.diff(lastSnapshot, snap)
+	S.myPending = #events
+
+	local since, hasAny = {}, false
+	for k, v in pairs(cursors) do
+		since[k] = v
+		hasAny = true
+	end
+
+	local function makeBody(chunk)
+		return {
+			channel = cfg.channel,
+			me      = tostring(S.meId),
+			name    = S.meName,
+			place   = tostring(game.PlaceId),
+			ver     = VERSION,
+			auto    = S.autoOn,
+			edit    = true,
+			pending = S.myPending,
+			since   = hasAny and since or {},
+			events  = chunk,
+		}
+	end
+
+	-- Крупное отправляем порциями: в один запрос Roblox больше нескольких
+	-- мегабайт не вывозит.
+	local chunks = {}
+	if #events > CHUNK_EVENTS then
+		local part = {}
+		for i, ev in ipairs(events) do
+			table.insert(part, ev)
+			if #part >= CHUNK_EVENTS or i == #events then
+				table.insert(chunks, part)
+				part = {}
+			end
+		end
+		addHistory(string.format("изменений много (%d) — отправляю %d порциями", #events, #chunks))
+	elseif #events > 0 then
+		chunks = { events }
+	end
+
+	local res, err
+	if #chunks == 0 then
+		res, err = Net.post("/v1/sync", makeBody(nil))
+	else
+		for i, chunk in ipairs(chunks) do
+			res, err = Net.post("/v1/sync", makeBody(chunk))
+			if err then break end
+			if i < #chunks then task.wait(0.2) end
+		end
+	end
+	if err then
+		S.statusText = "сбой обмена · " .. err
+		tick = math.min(tick * 2, TICK_MAX)
+		return
+	end
+
+	tick = AUTO_TICK
+	S.roster = res.roster or S.roster
+	notePresence(S.roster)
+
+	local sent = 0
+	if res.n then
+		lastSnapshot = snap
+		S.myPending = 0
+		sent = #events
+		addHistory(string.format("отправлено %d", sent))
+	end
+
+	if Tree.wasTruncated() then
+		logError("обход остановлен на %d объектах — часть проекта НЕ синхронизируется", MAX_INSTANCES)
+		addHistory(string.format("проект больше %d объектов — часть не уходит!", MAX_INSTANCES))
+	end
+
+	local applied, got = applyBatches(res.batches or {})
+	if applied > 0 then
+		local who = {}
+		for _, b in ipairs(res.batches or {}) do who[b.authorName or "?"] = true end
+		local names = {}
+		for n in pairs(who) do table.insert(names, n) end
+		addHistory(string.format("принято %d от %s", applied, table.concat(names, ", ")))
+	end
+	if #got > 0 then
+		addHistory(string.format("конфликтов: %d", #got))
+	end
+
+	if res.dropped and res.dropped > 0 then
+		logError("сервер выбросил %d непрочитанных пачек: не хватило места", res.dropped)
+		addHistory(string.format("ВНИМАНИЕ: сервер выбросил %d пачек", res.dropped))
+	end
+
+	if S.bigPending then return end
+	if res.more then
+		S.statusText = "подключен · есть ещё, доберу следующим заходом"
+	elseif applied > 0 or sent > 0 then
+		S.statusText = string.format("подключен · принято %d, отправлено %d, объектов %d",
+			applied, sent, count)
+	elseif #S.conflicts > 0 then
+		S.statusText = string.format("подключен · конфликтов %d", #S.conflicts)
+	else
+		S.statusText = "подключен · всё синхронно"
+	end
+end
+
+--==============================================================
+-- Подключение
+--==============================================================
+
+-- Всё, что человек вписал, запоминаем сразу и независимо от того,
+-- получилось подключиться или нет. Переспрашивать одно и то же — худшее,
+-- что может делать программа.
+-- Настройки плагина живут отдельно у каждой установки: поставил из каталога
+-- вместо файла — и поля пустые. Поэтому адрес сервера и канал дублируем в сам
+-- проект, атрибутами на ServerStorage. Ключ там НЕ храним: место можно
+-- опубликовать или передать, и ключ утечёт вместе с ним.
+local PLACE_SERVER  = "__RussTeamServer"
+local PLACE_CHANNEL = "__RussTeamChannel"
+
+local function placeStore()
+	local ok, svc = pcall(function() return game:GetService("ServerStorage") end)
+	return ok and svc or nil
+end
+
+local function rememberInPlace()
+	local store = placeStore()
+	if not store then return end
+	pcall(function()
+		store:SetAttribute(PLACE_SERVER, cfg.server)
+		store:SetAttribute(PLACE_CHANNEL, cfg.channel)
+	end)
+end
+
+local function recallFromPlace()
+	local store = placeStore()
+	if not store then return nil, nil end
+	local okS, srv = pcall(function() return store:GetAttribute(PLACE_SERVER) end)
+	local okC, chan = pcall(function() return store:GetAttribute(PLACE_CHANNEL) end)
+	return okS and srv or nil, okC and chan or nil
+end
+
+local function remember()
+	plugin:SetSetting("server", cfg.server)
+	plugin:SetSetting("key", cfg.key)
+	plugin:SetSetting("channel", cfg.channel)
+	rememberInPlace()
+end
+
+local function doConnect(silent)
+	local chan, srv, key = Panel.fields()
+	cfg.channel = chan:gsub("%s", "")
+	cfg.server  = srv:gsub("%s", "")
+	cfg.key     = key:gsub("%s", "")
+	remember()
+
+	if cfg.server == "" then
+		S.connected = false
+		S.statusText = "не подключен · впиши адрес сервера"
+		Panel.showSetup(true)
+		return
+	end
+	if cfg.key == "" then
+		S.connected = false
+		S.statusText = "не подключен · впиши ключ доступа"
+		Panel.showSetup(true)
+		return
+	end
+	if cfg.channel == "" or #cfg.channel < 4 or cfg.channel:match("[^%w%-_]") then
+		S.connected = false
+		S.statusText = "не подключен · код канала: буквы, цифры, дефис, от 4 знаков"
+		return
+	end
+
+	whoAmI()
+	Net.configure(cfg.server, cfg.key)
+
+	local health, err = Net.talk("GET", "/health")
+	if err then
+		S.connected = false
+		S.statusText = "не подключен · " .. err
+		return
+	end
+	if not health or health.service ~= "russteam" then
+		S.connected = false
+		S.statusText = "не подключен · по этому адресу отвечает не RussTeam"
+		return
+	end
+
+	local saved = plugin:GetSetting("cursors_" .. safeId(cfg.channel))
+	if saved then
+		local okJson, tbl = pcall(function() return HttpService:JSONDecode(saved) end)
+		cursors = (okJson and type(tbl) == "table") and tbl or {}
+	else
+		cursors = {}
+	end
+
+	lastSnapshot = (Tree.scan())
+	S.connected = true
+	S.statusText = "подключен · канал " .. cfg.channel
+	if not silent then log("подключен как %s, сервер %s", S.meName, cfg.server) end
+end
+
+--==============================================================
+-- Обработчики панели
+--==============================================================
+
+local function guard(fn, what)
+	if busy then return end
+	busy = true
+	S.statusText = what .. "…"
+	Panel.refresh()
+	task.spawn(function()
+		local ok, err = pcall(fn)
+		if not ok then
+			S.statusText = "ошибка: " .. tostring(err)
+			logError("%s", tostring(err))
+		end
+		busy = false
+		pcall(Panel.refresh)
+	end)
+end
+
+local handlers = {
+	scan = Tree.scan,
+	applyProps = Apply.applyProps,
+	flushRefs = Apply.flushRefs,
+
+	onConnect = function()
+		if S.connected then
+			S.connected = false
+			S.roster = {}
+			knownIds = {}
+			S.presenceNote = nil
+			S.statusText = "не подключен · обмен остановлен"
+			addHistory("отключился")
+			Panel.refresh()
+			return
+		end
+		guard(function()
+			doConnect(false)
+			if S.connected then
+				addHistory("подключился, догоняю накопленное")
+				syncOnce(true)
+			end
+		end, "подключаюсь")
+	end,
+
+	onSync = function()
+		if not S.connected then
+			S.statusText = "не подключен · сначала подключись"
+			Panel.refresh()
+			return
+		end
+		guard(function() syncOnce(true) end, "обмениваюсь")
+	end,
+
+	onToggleAuto = function()
+		S.autoOn = not S.autoOn
+		plugin:SetSetting("auto", S.autoOn)
+		addHistory(S.autoOn and "живой режим включён" or "живой режим выключен")
+		if S.autoOn and S.connected then
+			guard(function() syncOnce(false) end, "обмениваюсь")
+		else
+			Panel.refresh()
+		end
+	end,
+
+	onAcceptBig = function()
+		if not S.bigPending then return end
+		guard(function()
+			bigApproved = true
+			local batches = S.bigPending.batches
+			S.bigPending = nil
+			local applied = applyBatches(batches)
+			addHistory(string.format("подтверждено вручную: принято %d", applied))
+		end, "переношу")
+	end,
+}
+
+Panel.create(plugin, S, handlers)
+
+--==============================================================
+-- Живой режим
+--==============================================================
+
+do
+	local saved = plugin:GetSetting("auto")
+	S.autoOn = (saved == nil) or (saved == true)
+end
+
+task.spawn(function()
+	while true do
+		task.wait(tick)
+		if S.connected and not busy then
+			busy = true
+			local ok, err = pcall(function()
+				if S.autoOn then
+					syncOnce(false)
+				end
+			end)
+			busy = false
+			if not ok then
+				S.statusText = "ошибка обмена: " .. tostring(err)
+				logError("сбой обмена: %s", tostring(err))
+			end
+			pcall(Panel.refresh)
+		end
+	end
+end)
+
+task.defer(function()
+	-- Если плагин переустановили, поля пустые — берём запас из проекта.
+	local chan0, srv0, key0 = Panel.fields()
+	if srv0 == "" or chan0 == "" then
+		local srvP, chanP = recallFromPlace()
+		if (srv0 == "" and srvP) or (chan0 == "" and chanP) then
+			Panel.setFields(chan0 == "" and chanP or nil, srv0 == "" and srvP or nil, nil)
+			if key0 == "" then
+				Panel.showSetup(true)
+				S.statusText = "не подключен · адрес и канал восстановлены, впиши ключ"
+			end
+		end
+	end
+
+	local chan, srv, key = Panel.fields()
+	if chan ~= "" and srv ~= "" and key ~= "" then
+		guard(function()
+			doConnect(true)
+			if S.connected then syncOnce(false) end
+		end, "подключаюсь")
+	else
+		Panel.refresh()
+	end
+end)
+
+do
+	local okV, v = pcall(version)
+	log("RussTeam %s загружен, Studio %s", VERSION, okV and tostring(v) or "?")
+end
