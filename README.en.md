@@ -8,7 +8,7 @@
 
 Different accounts, different places, different cities — one shared channel.
 
-[![version](https://img.shields.io/badge/version-2.6-3a7ae0)](https://github.com/vvladislovv/RussTeam/releases)
+[![version](https://img.shields.io/badge/version-5.3-3a7ae0)](https://github.com/vvladislovv/RussTeam/releases)
 [![plugin](https://img.shields.io/badge/Roblox-plugin-d63e3e)](https://create.roblox.com/store/asset/97875424740318/RussTeam)
 [![license](https://img.shields.io/badge/license-MIT-66a060)](LICENSE)
 

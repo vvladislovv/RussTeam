@@ -124,10 +124,26 @@ local function propListFor(inst)
 	return list
 end
 
-local function capture(inst, parentSid)
+-- Родословная: цепочка от корня до самого объекта. Нужна, потому что проекты
+-- у людей РАЗНЫЕ: идентификатор родителя из чужого проекта у меня ничего не
+-- значит, а по именам и классам я могу достроить недостающих родителей сам.
+-- Studio требует разрешение на изменение скриптов не только для записи,
+-- но и для ЧТЕНИЯ исходников. Без него скрипты нельзя ни отправить, ни принять.
+local sourceReadDenied = 0
+
+function Serialize.takeSourceReadDenied()
+	local n = sourceReadDenied
+	sourceReadDenied = 0
+	return n
+end
+
+local function capture(inst, parentSid, ancestry)
 	local props = {}
 	for _, name in ipairs(propListFor(inst)) do
 		local ok, raw = pcall(function() return inst[name] end)
+		if not ok and name == "Source" then
+			sourceReadDenied += 1
+		end
 		if ok then
 			local enc
 			if typeof(raw) == "CFrame" then
@@ -143,6 +159,7 @@ local function capture(inst, parentSid)
 		cls    = inst.ClassName,
 		name   = inst.Name,
 		parent = parentSid,
+		anc    = ancestry,      -- где искать или что достроить
 		props  = props,
 	}
 end

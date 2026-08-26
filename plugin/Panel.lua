@@ -21,6 +21,7 @@ local S = {
 	autoOn = true, myPending = 0, presenceNote = nil, devShown = false,
 }
 local H = {}
+local oldVersions = 0   -- у скольких участников версия не наша
 
 local function agoText(ts)
 	if not ts then return "давно" end
@@ -59,6 +60,7 @@ local MUTED  = Color3.fromRGB(140, 149, 166)
 local BLUE   = Color3.fromRGB(58, 122, 224)
 local GREEN  = Color3.fromRGB(66, 160, 96)
 local WARN   = Color3.fromRGB(220, 160, 60)
+local RED    = Color3.fromRGB(214, 92, 92)
 
 local scroll = Instance.new("ScrollingFrame")
 scroll.Size = UDim2.fromScale(1, 1)
@@ -252,6 +254,45 @@ do
 	bannerSub.Parent = banner
 end
 
+-- Ход приёма: видно, сколько осталось, и что трогать проект нельзя
+local progFrame, progFill, progText
+do
+	progFrame = Instance.new("Frame")
+	progFrame.Size = UDim2.new(1, 0, 0, 34)
+	progFrame.BackgroundColor3 = PANEL
+	progFrame.BorderSizePixel = 0
+	progFrame.Visible = false
+	progFrame.LayoutOrder = nextOrder()
+	progFrame.Parent = root
+	corner(progFrame)
+
+	local track = Instance.new("Frame")
+	track.Size = UDim2.new(1, -16, 0, 6)
+	track.Position = UDim2.fromOffset(8, 22)
+	track.BackgroundColor3 = FIELD
+	track.BorderSizePixel = 0
+	track.Parent = progFrame
+	corner(track, 3)
+
+	progFill = Instance.new("Frame")
+	progFill.Size = UDim2.new(0, 0, 1, 0)
+	progFill.BackgroundColor3 = GREEN
+	progFill.BorderSizePixel = 0
+	progFill.Parent = track
+	corner(progFill, 3)
+
+	progText = Instance.new("TextLabel")
+	progText.Size = UDim2.new(1, -16, 0, 18)
+	progText.Position = UDim2.fromOffset(8, 3)
+	progText.BackgroundTransparency = 1
+	progText.Font = Enum.Font.GothamMedium
+	progText.TextSize = 12
+	progText.TextXAlignment = Enum.TextXAlignment.Left
+	progText.TextColor3 = WARN
+	progText.Text = ""
+	progText.Parent = progFrame
+end
+
 label("Канал — общий код у обоих", MUTED)
 local chanBox = field("RUSSTEAM-7K4M-92XQ", "channel")
 
@@ -268,7 +309,7 @@ local keyBox = field("rt_...", "key")
 local connectBtn = button("Подключиться", BLUE, 38)
 local statusLbl = label("не подключен", MUTED, 32)
 
-label("Кто в канале", MUTED, 18, true)
+local peopleLbl = label("Кто в канале", MUTED, 18, true)
 local peopleFrame = Instance.new("Frame")
 peopleFrame.Size = UDim2.new(1, 0, 0, 0)
 peopleFrame.AutomaticSize = Enum.AutomaticSize.Y
@@ -314,6 +355,11 @@ do
 end
 
 local bigBtn = button("Принять большую пачку", WARN)
+local fullAcceptBtn = button("Принять весь проект", WARN, 38)
+local sendDelBtn = button("Отправить удаления", RED, 38)
+local rejectFullBtn = button("Отклонить весь проект")
+local rejectBigBtn = button("Отклонить")
+local rejectSendBtn = button("Не отправлять")
 
 local conflictLbl = label("Конфликты", MUTED, 18, true)
 local conflictFrame = Instance.new("Frame")
@@ -338,6 +384,11 @@ end
 
 -- внизу: ручной обмен и переключатель живого режима
 local syncBtn = button("Обменяться сейчас")
+local fullBtn = button("Отправить весь проект")
+local askFullBtn = button("Запросить весь проект")
+local pruneBtn = button("Убрать то, чего нет у напарника")
+local dedupeBtn = button("Убрать дубликаты")
+local repairBtn = button("Починить пустые меши")
 local autoBtn = button("Живой режим: включён", GREEN)
 
 -- Служебное показываем только по просьбе: в обычной работе панель должна
@@ -346,6 +397,11 @@ local function setDev(on)
 	S.devShown = on
 	histLbl.Visible = on
 	histFrame.Visible = on
+	peopleLbl.Visible = on
+	peopleFrame.Visible = on
+	pruneBtn.Visible = on and S.connected
+	dedupeBtn.Visible = on and S.connected
+	repairBtn.Visible = on and S.connected
 	conflictLbl.Visible = on or (#S.conflicts > 0)
 	conflictFrame.Visible = on or (#S.conflicts > 0)
 	syncBtn.Visible = on and S.connected
@@ -413,7 +469,21 @@ local function onlinePeers()
 	return n
 end
 
+local function refreshProgress()
+	local p = S.progress
+	if not p or not p.total or p.total == 0 then
+		progFrame.Visible = false
+		return
+	end
+	progFrame.Visible = true
+	local share = math.clamp((p.done or 0) / p.total, 0, 1)
+	progFill.Size = UDim2.new(share, 0, 1, 0)
+	progText.Text = string.format("принимаю %d из %d — НЕ ТРОГАЙ ПРОЕКТ (%d%%)",
+		p.done or 0, p.total, math.floor(share * 100))
+end
+
 local function refreshStatus()
+	refreshProgress()
 	statusLbl.Text = S.statusText
 	hintLbl.Visible = not S.connected and (srvBox.Text == "" or keyBox.Text == "")
 	statusLbl.TextColor3 = S.connected and TEXT or MUTED
@@ -421,11 +491,37 @@ local function refreshStatus()
 	whoLbl.Text = S.connected and ("подключен как " .. S.meName) or "не подключен"
 	connectBtn.Text = S.connected and "Отключиться" or "Подключиться"
 	connectBtn.BackgroundColor3 = S.connected and PANEL or BLUE
-	syncBtn.Visible = S.connected and S.devShown
+	-- В обычном виде панель отвечает на один вопрос: идёт обмен или нет.
+	-- Всё остальное — под «Показать подробности».
+	syncBtn.Visible    = S.connected and S.devShown
+	fullBtn.Visible    = S.connected and S.devShown
+	askFullBtn.Visible = S.connected and S.devShown
+	pruneBtn.Visible   = S.connected and S.devShown
+	dedupeBtn.Visible  = S.connected and S.devShown
+	repairBtn.Visible  = S.connected and S.devShown
 	autoBtn.Visible = S.connected
 	conflictLbl.Visible = S.devShown or (#S.conflicts > 0)
 	conflictFrame.Visible = S.devShown or (#S.conflicts > 0)
 	bigBtn.Visible = S.bigPending ~= nil
+	if S.bigPending then
+		local d = S.bigPending.deletions
+		bigBtn.Text = d and string.format("Принять УДАЛЕНИЕ %d объектов", d)
+			or string.format("Принять %d изменений", S.bigPending.count or 0)
+		bigBtn.BackgroundColor3 = d and RED or WARN
+	end
+	fullAcceptBtn.Visible = S.fullPending ~= nil
+	sendDelBtn.Visible = S.sendPending ~= nil
+	rejectFullBtn.Visible = S.fullPending ~= nil
+	rejectBigBtn.Visible = S.bigPending ~= nil
+	rejectSendBtn.Visible = S.sendPending ~= nil
+	if S.sendPending then
+		sendDelBtn.Text = string.format("Да, я удалил %d объектов — отправить",
+			S.sendPending.count or 0)
+	end
+	if S.fullPending then
+		fullAcceptBtn.Text = string.format("Принять весь проект: %d объектов",
+			S.fullPending.count or 0)
+	end
 	if S.bigPending then
 		bigBtn.Text = string.format("Принять %d изменений", S.bigPending.count)
 	end
@@ -471,6 +567,15 @@ local function refreshStatus()
 		bannerSub.Text = bannerSub.Text .. string.format("  ·  у тебя %d неотправленных", S.myPending)
 	end
 	bannerSub.Text = bannerSub.Text .. (S.autoOn and "  ·  живой режим" or "  ·  вручную")
+	if S.scriptsBlocked then
+		bannerSub.Text = "нет разрешения менять скрипты — код не переносится"
+		bannerSub.TextColor3 = RED
+	elseif oldVersions > 0 then
+		bannerSub.Text = string.format("у %d участник%s версия старее %s — обмен не дойдёт",
+			oldVersions, oldVersions == 1 and "а" or "ов", VERSION)
+		bannerSub.TextColor3 = RED
+	end
+
 	if not RunService:IsEdit() then
 		bannerMain.Text = "ИДЁТ ЗАПУСК ИГРЫ"
 		bannerMain.TextColor3 = MUTED
@@ -509,6 +614,7 @@ local function refreshPeople()
 	-- иначе через неделю тут кладбище из старых имён.
 	local now = os.time()
 	local n = 0
+	oldVersions = 0
 	for id, rec in pairs(S.roster) do
 		if type(rec) == "table" and rec.at and (now - rec.at) < IDLE_AFTER then
 			n += 1
@@ -531,8 +637,13 @@ local function refreshPeople()
 			d.Parent = f
 			corner(d, 4)
 
+			-- Версия у каждого на виду: разные версии — самая частая причина
+			-- того, что изменения не доходят.
+			local ver = tostring(rec.ver or "?")
+			local outdated = (ver ~= VERSION) and ver ~= "?"
+
 			local t = Instance.new("TextLabel")
-			t.Size = UDim2.new(1, -14, 1, 0)
+			t.Size = UDim2.new(1, -96, 1, 0)
 			t.Position = UDim2.fromOffset(14, 0)
 			t.BackgroundTransparency = 1
 			t.Font = working and Enum.Font.GothamMedium or Enum.Font.Gotham
@@ -542,6 +653,35 @@ local function refreshPeople()
 			t.TextColor3 = isMe and MUTED or (working and WARN or TEXT)
 			t.Text = string.format("%s%s — %s", rec.name or id, isMe and " (ты)" or "", state)
 			t.Parent = f
+
+			if not isMe then
+				local kick = Instance.new("TextButton")
+				kick.Size = UDim2.fromOffset(18, 18)
+				kick.Position = UDim2.new(1, -18, 0, 2)
+				kick.BackgroundColor3 = FIELD
+				kick.BorderSizePixel = 0
+				kick.Font = Enum.Font.GothamBold
+				kick.TextSize = 12
+				kick.TextColor3 = RED
+				kick.Text = "×"
+				kick.Parent = f
+				corner(kick, 4)
+				kick.MouseButton1Click:Connect(function()
+					if H.onKick then H.onKick(id, rec.name) end
+				end)
+			end
+
+			local v = Instance.new("TextLabel")
+			v.Size = UDim2.fromOffset(52, 22)
+			v.Position = UDim2.new(1, isMe and -52 or -74, 0, 0)
+			v.BackgroundTransparency = 1
+			v.Font = outdated and Enum.Font.GothamBold or Enum.Font.Gotham
+			v.TextSize = 11
+			v.TextXAlignment = Enum.TextXAlignment.Right
+			v.TextColor3 = outdated and RED or MUTED
+			v.Text = outdated and (ver .. " ⚠") or ver
+			v.Parent = f
+			if outdated then oldVersions += 1 end
 		end
 	end
 	if n == 0 then emptyRow(peopleFrame, "никого") end
@@ -640,8 +780,8 @@ local function refreshConflicts()
 end
 
 local function refreshAll()
+	refreshPeople()   -- первым: здесь считаются устаревшие версии
 	refreshStatus()
-	refreshPeople()
 	refreshHistory()
 	refreshConflicts()
 end
@@ -656,11 +796,41 @@ end
 	syncBtn.MouseButton1Click:Connect(function()
 		if H.onSync then H.onSync() end
 	end)
+	fullBtn.MouseButton1Click:Connect(function()
+		if H.onFullPush then H.onFullPush() end
+	end)
+	dedupeBtn.MouseButton1Click:Connect(function()
+		if H.onDedupe then H.onDedupe() end
+	end)
+	repairBtn.MouseButton1Click:Connect(function()
+		if H.onRepairMeshes then H.onRepairMeshes() end
+	end)
 	autoBtn.MouseButton1Click:Connect(function()
 		if H.onToggleAuto then H.onToggleAuto() end
 	end)
 	bigBtn.MouseButton1Click:Connect(function()
 		if H.onAcceptBig then H.onAcceptBig() end
+	end)
+	fullAcceptBtn.MouseButton1Click:Connect(function()
+		if H.onAcceptFull then H.onAcceptFull() end
+	end)
+	sendDelBtn.MouseButton1Click:Connect(function()
+		if H.onAcceptSend then H.onAcceptSend() end
+	end)
+	rejectFullBtn.MouseButton1Click:Connect(function()
+		if H.onRejectFull then H.onRejectFull() end
+	end)
+	rejectBigBtn.MouseButton1Click:Connect(function()
+		if H.onRejectBig then H.onRejectBig() end
+	end)
+	rejectSendBtn.MouseButton1Click:Connect(function()
+		if H.onRejectSend then H.onRejectSend() end
+	end)
+	askFullBtn.MouseButton1Click:Connect(function()
+		if H.onRequestFull then H.onRequestFull() end
+	end)
+	pruneBtn.MouseButton1Click:Connect(function()
+		if H.onPrune then H.onPrune() end
 	end)
 	openBtn.Click:Connect(function()
 		widget.Enabled = not widget.Enabled

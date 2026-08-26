@@ -41,7 +41,8 @@ local function scan()
 		return SKIP_CHARACTERS and isCharacter(inst)
 	end
 
-	local function walk(inst, parentSid)
+	-- ancestry накапливается по ходу спуска: короткие записи «имя + класс + номер»
+	local function walk(inst, parentSid, ancestry)
 		for _, child in ipairs(inst:GetChildren()) do
 			if ignored(child) then
 				continue
@@ -59,11 +60,15 @@ local function scan()
 				if type(existing) == "string" and snap[existing] then
 					child:SetAttribute(SID_ATTR, newSid())
 				end
-				local rec = capture(child, parentSid)
+				local rec = capture(child, parentSid, ancestry)
 				rec.hash = hashRecord(rec)
 				snap[rec.sid] = rec
 				index[rec.sid] = child
-				walk(child, rec.sid)
+
+				-- родословная для детей: наша плюс мы сами
+				local deeper = table.clone(ancestry)
+				table.insert(deeper, { n = rec.name, c = rec.cls, s = rec.sid })
+				walk(child, rec.sid, deeper)
 			end
 		end
 	end
@@ -71,7 +76,8 @@ local function scan()
 	for _, rootName in ipairs(ROOTS) do
 		local ok, root = pcall(function() return game:GetService(rootName) end)
 		if ok and root then
-			walk(root, rootSid(rootName))
+			-- в начале родословной сам сервис: с него получатель начнёт поиск
+			walk(root, rootSid(rootName), { { root = rootName } })
 		end
 	end
 
@@ -96,7 +102,12 @@ local function diff(oldSnap, newSnap)
 
 	for sid, prev in pairs(oldSnap) do
 		if not newSnap[sid] then
-			table.insert(events, { op = "del", sid = sid, name = prev.name, base = prev.hash })
+			-- Кладём имя, класс и родословную: у напарника проект другой,
+			-- по одному номеру он объект не найдёт.
+			table.insert(events, {
+				op = "del", sid = sid, name = prev.name, cls = prev.cls,
+				anc = prev.anc, parent = prev.parent, base = prev.hash,
+			})
 		end
 	end
 

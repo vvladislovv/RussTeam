@@ -6,7 +6,9 @@ local Config = {}
 
 
 Config.SID_ATTR       = "__vsid"
-Config.MAX_INSTANCES  = 8000
+-- Обрезать проект нельзя: лучше долгая отправка, чем молча потерянная часть.
+-- Предел оставлен только как защита от бесконечного обхода.
+Config.MAX_INSTANCES  = 100000
 Config.MAX_FEED_CHAR  = 24000000       -- предел на одну отправку, крупнее шлём порциями
 Config.LOGO           = "rbxassetid://76862624121244"
 Config.LOGO_ON        = "rbxassetid://81200107897024"   -- есть связь
@@ -14,14 +16,28 @@ Config.LOGO_OFF       = "rbxassetid://74248098555570"   -- связи нет
 -- В консоль Studio по умолчанию идут только поломки. Поставь true,
 -- если надо видеть каждый шаг при разборе.
 Config.VERBOSE        = false
-Config.VERSION        = "2.6"          -- видно на сервере: сразу ясно, у кого что запущено
-Config.AUTO_TICK      = 5              -- как часто обмениваемся, секунды
+-- Автоматическая уборка ВЫКЛЮЧЕНА. Она оказалась слишком грубой: у моделей
+-- и папок сравнить содержимое дёшево нельзя, и под нож попадало нужное.
+-- Дубликаты предотвращаются при приёме (объект узнаётся, а не создаётся),
+-- а разовая уборка осталась кнопкой в подробностях.
+Config.AUTO_DEDUPE    = false
+Config.VERSION        = "5.3"          -- видно на сервере: сразу ясно, у кого что запущено
+-- Надёжность важнее скорости: за 12 секунд крупная пачка успевает применяться
+-- целиком, и обмены не наступают друг другу на пятки.
+Config.AUTO_TICK      = 12
 Config.TICK_MAX       = 60             -- при сбоях отступаем до этого значения
 -- Замер на живой Studio: 20 000 событий (3,5 МБ) уходят за 0,66 с, а 60 000
 -- (10,6 МБ) Roblox уже не вывозит — обрывает по таймауту. Берём с запасом.
 Config.CHUNK_EVENTS   = 8000
+-- Приём идёт порциями: Studio успевает дышать, а человек видит ход работы.
+-- Меньше порция — плавнее, но дольше; больше — быстрее, но рывками.
+Config.APPLY_SLICE    = 200
 Config.MAX_CONFLICTS  = 50             -- больше в списке держать бессмысленно
-Config.BIG_CHANGE     = 400            -- больше этого за раз не применяем без подтверждения
+Config.BIG_CHANGE     = 400
+-- Массовое удаление — почти всегда беда, а не намерение: сбой у напарника,
+-- случайное выделение, откат. Больше этого числа удалений за раз требуют
+-- подтверждения человеком, даже если остальное принимается само.
+Config.MAX_AUTO_DELETE = 50            -- больше этого за раз не применяем без подтверждения
 Config.IDLE_AFTER     = 300                             -- через сколько секунд считаем, что человек отошёл
 
 -- Что не считаем изменениями проекта. Мусор от запуска игры и служебные
@@ -34,10 +50,11 @@ Config.IGNORE_NAMES = {
 
 Config.IGNORE_PREFIX = { "__" }        -- служебное и временные папки
 
--- Персонажей и манекенов (всё, внутри чего есть Humanoid) не переносим: они
--- появляются сами при запуске игры и весят по сотне деталей. Если понадобится
--- переносить NPC — поставь false, но приготовься к длинным спискам.
-Config.SKIP_CHARACTERS = true
+-- Персонажей раньше отсекали целиком — из-за манекенов, которые Studio
+-- создаёт при запуске игры. Но обмен и так стоит на паузе во время Play,
+-- значит в режиме редактирования всё с Humanoid — настоящее содержимое:
+-- NPC, оснастки, заготовки. Их надо переносить.
+Config.SKIP_CHARACTERS = false
 
 Config.ROOTS = {
 	"Workspace",
@@ -88,6 +105,18 @@ Config.SYNCED_CLASSES = {
 	-- освещение и атмосфера
 	Sky = true, Atmosphere = true, BlurEffect = true, BloomEffect = true,
 	DepthOfFieldEffect = true, SunRaysEffect = true, ColorCorrectionEffect = true,
+	-- контейнеры Starter*: без них молча пропадают все скрипты внутри
+	StarterPlayerScripts = true, StarterCharacterScripts = true, StarterGear = true,
+	-- связь между кодом: без них игра у напарника не заработает
+	RemoteEvent = true, RemoteFunction = true,
+	BindableEvent = true, BindableFunction = true,
+	-- одежда, внешность и оснастка персонажа
+	NoCollisionConstraint = true, AnimationConstraint = true,
+	WrapTarget = true, WrapLayer = true,
+	BodyColors = true, BodyPartDescription = true, FaceControls = true,
+	CharacterMesh = true, Shirt = true, Pants = true, ShirtGraphic = true,
+	-- оснастка персонажей
+	Bone = true, Motor = true, AnimationController = true, Animator = false,
 	-- прочее
 	Animation = true, Tool = true, ClickDetector = true, ProximityPrompt = true,
 	SpecialMesh = true, UIFlexItem = true,
@@ -146,7 +175,17 @@ Config.PROPS = {
 	Highlight       = { "Adornee", "FillColor", "OutlineColor", "FillTransparency",
 	                    "OutlineTransparency", "DepthMode", "Enabled" },
 	Humanoid        = { "MaxHealth", "Health", "WalkSpeed", "JumpPower", "HipHeight",
-	                    "DisplayName", "RigType" },
+	                    "DisplayName", "RigType", "AutoRotate", "BreakJointsOnDeath" },
+	Bone            = { "CFrame", "Transform" },
+	NoCollisionConstraint = { "Part0", "Part1", "Enabled" },
+	WrapTarget      = { "CageMeshId", "CageOrigin", "Color", "ImportOrigin", "Stiffness" },
+	WrapLayer       = { "CageMeshId", "ReferenceMeshId", "Color", "Order", "Puffiness" },
+	BodyColors      = { "HeadColor3", "LeftArmColor3", "LeftLegColor3", "RightArmColor3",
+	                    "RightLegColor3", "TorsoColor3" },
+	Shirt           = { "ShirtTemplate", "Color3" },
+	Pants           = { "PantsTemplate", "Color3" },
+	ShirtGraphic    = { "Graphic", "Color3" },
+	CharacterMesh   = { "BaseTextureId", "BodyPart", "MeshId", "OverlayTextureId" },
 	Accessory       = { "AccessoryType" },
 	Sound           = { "SoundId", "Volume", "Playing", "Looped", "PlaybackSpeed",
 	                    "RollOffMaxDistance", "RollOffMinDistance", "SoundGroup" },

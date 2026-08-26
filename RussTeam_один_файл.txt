@@ -1,5 +1,11 @@
 -- RussTeam, собранный в один файл (для вставки в Studio целиком).
 -- Разработка идёт в отдельных модулях, см. папку plugin/.
+--
+-- ВАЖНО: это плагин. Если файл случайно остался скриптом внутри проекта,
+-- при запуске игры он ничего не сделает — просто выйдет.
+if not plugin then
+	return
+end
 
 -- ======================= Config =======================
 local __Config = (function()
@@ -10,7 +16,9 @@ local Config = {}
 
 
 Config.SID_ATTR       = "__vsid"
-Config.MAX_INSTANCES  = 8000
+-- Обрезать проект нельзя: лучше долгая отправка, чем молча потерянная часть.
+-- Предел оставлен только как защита от бесконечного обхода.
+Config.MAX_INSTANCES  = 100000
 Config.MAX_FEED_CHAR  = 24000000       -- предел на одну отправку, крупнее шлём порциями
 Config.LOGO           = "rbxassetid://76862624121244"
 Config.LOGO_ON        = "rbxassetid://81200107897024"   -- есть связь
@@ -18,14 +26,28 @@ Config.LOGO_OFF       = "rbxassetid://74248098555570"   -- связи нет
 -- В консоль Studio по умолчанию идут только поломки. Поставь true,
 -- если надо видеть каждый шаг при разборе.
 Config.VERBOSE        = false
-Config.VERSION        = "2.6"          -- видно на сервере: сразу ясно, у кого что запущено
-Config.AUTO_TICK      = 5              -- как часто обмениваемся, секунды
+-- Автоматическая уборка ВЫКЛЮЧЕНА. Она оказалась слишком грубой: у моделей
+-- и папок сравнить содержимое дёшево нельзя, и под нож попадало нужное.
+-- Дубликаты предотвращаются при приёме (объект узнаётся, а не создаётся),
+-- а разовая уборка осталась кнопкой в подробностях.
+Config.AUTO_DEDUPE    = false
+Config.VERSION        = "5.3"          -- видно на сервере: сразу ясно, у кого что запущено
+-- Надёжность важнее скорости: за 12 секунд крупная пачка успевает применяться
+-- целиком, и обмены не наступают друг другу на пятки.
+Config.AUTO_TICK      = 12
 Config.TICK_MAX       = 60             -- при сбоях отступаем до этого значения
 -- Замер на живой Studio: 20 000 событий (3,5 МБ) уходят за 0,66 с, а 60 000
 -- (10,6 МБ) Roblox уже не вывозит — обрывает по таймауту. Берём с запасом.
 Config.CHUNK_EVENTS   = 8000
+-- Приём идёт порциями: Studio успевает дышать, а человек видит ход работы.
+-- Меньше порция — плавнее, но дольше; больше — быстрее, но рывками.
+Config.APPLY_SLICE    = 200
 Config.MAX_CONFLICTS  = 50             -- больше в списке держать бессмысленно
-Config.BIG_CHANGE     = 400            -- больше этого за раз не применяем без подтверждения
+Config.BIG_CHANGE     = 400
+-- Массовое удаление — почти всегда беда, а не намерение: сбой у напарника,
+-- случайное выделение, откат. Больше этого числа удалений за раз требуют
+-- подтверждения человеком, даже если остальное принимается само.
+Config.MAX_AUTO_DELETE = 50            -- больше этого за раз не применяем без подтверждения
 Config.IDLE_AFTER     = 300                             -- через сколько секунд считаем, что человек отошёл
 
 -- Что не считаем изменениями проекта. Мусор от запуска игры и служебные
@@ -38,10 +60,11 @@ Config.IGNORE_NAMES = {
 
 Config.IGNORE_PREFIX = { "__" }        -- служебное и временные папки
 
--- Персонажей и манекенов (всё, внутри чего есть Humanoid) не переносим: они
--- появляются сами при запуске игры и весят по сотне деталей. Если понадобится
--- переносить NPC — поставь false, но приготовься к длинным спискам.
-Config.SKIP_CHARACTERS = true
+-- Персонажей раньше отсекали целиком — из-за манекенов, которые Studio
+-- создаёт при запуске игры. Но обмен и так стоит на паузе во время Play,
+-- значит в режиме редактирования всё с Humanoid — настоящее содержимое:
+-- NPC, оснастки, заготовки. Их надо переносить.
+Config.SKIP_CHARACTERS = false
 
 Config.ROOTS = {
 	"Workspace",
@@ -92,6 +115,18 @@ Config.SYNCED_CLASSES = {
 	-- освещение и атмосфера
 	Sky = true, Atmosphere = true, BlurEffect = true, BloomEffect = true,
 	DepthOfFieldEffect = true, SunRaysEffect = true, ColorCorrectionEffect = true,
+	-- контейнеры Starter*: без них молча пропадают все скрипты внутри
+	StarterPlayerScripts = true, StarterCharacterScripts = true, StarterGear = true,
+	-- связь между кодом: без них игра у напарника не заработает
+	RemoteEvent = true, RemoteFunction = true,
+	BindableEvent = true, BindableFunction = true,
+	-- одежда, внешность и оснастка персонажа
+	NoCollisionConstraint = true, AnimationConstraint = true,
+	WrapTarget = true, WrapLayer = true,
+	BodyColors = true, BodyPartDescription = true, FaceControls = true,
+	CharacterMesh = true, Shirt = true, Pants = true, ShirtGraphic = true,
+	-- оснастка персонажей
+	Bone = true, Motor = true, AnimationController = true, Animator = false,
 	-- прочее
 	Animation = true, Tool = true, ClickDetector = true, ProximityPrompt = true,
 	SpecialMesh = true, UIFlexItem = true,
@@ -150,7 +185,17 @@ Config.PROPS = {
 	Highlight       = { "Adornee", "FillColor", "OutlineColor", "FillTransparency",
 	                    "OutlineTransparency", "DepthMode", "Enabled" },
 	Humanoid        = { "MaxHealth", "Health", "WalkSpeed", "JumpPower", "HipHeight",
-	                    "DisplayName", "RigType" },
+	                    "DisplayName", "RigType", "AutoRotate", "BreakJointsOnDeath" },
+	Bone            = { "CFrame", "Transform" },
+	NoCollisionConstraint = { "Part0", "Part1", "Enabled" },
+	WrapTarget      = { "CageMeshId", "CageOrigin", "Color", "ImportOrigin", "Stiffness" },
+	WrapLayer       = { "CageMeshId", "ReferenceMeshId", "Color", "Order", "Puffiness" },
+	BodyColors      = { "HeadColor3", "LeftArmColor3", "LeftLegColor3", "RightArmColor3",
+	                    "RightLegColor3", "TorsoColor3" },
+	Shirt           = { "ShirtTemplate", "Color3" },
+	Pants           = { "PantsTemplate", "Color3" },
+	ShirtGraphic    = { "Graphic", "Color3" },
+	CharacterMesh   = { "BaseTextureId", "BodyPart", "MeshId", "OverlayTextureId" },
 	Accessory       = { "AccessoryType" },
 	Sound           = { "SoundId", "Volume", "Playing", "Looped", "PlaybackSpeed",
 	                    "RollOffMaxDistance", "RollOffMinDistance", "SoundGroup" },
@@ -318,10 +363,26 @@ local function propListFor(inst)
 	return list
 end
 
-local function capture(inst, parentSid)
+-- Родословная: цепочка от корня до самого объекта. Нужна, потому что проекты
+-- у людей РАЗНЫЕ: идентификатор родителя из чужого проекта у меня ничего не
+-- значит, а по именам и классам я могу достроить недостающих родителей сам.
+-- Studio требует разрешение на изменение скриптов не только для записи,
+-- но и для ЧТЕНИЯ исходников. Без него скрипты нельзя ни отправить, ни принять.
+local sourceReadDenied = 0
+
+function Serialize.takeSourceReadDenied()
+	local n = sourceReadDenied
+	sourceReadDenied = 0
+	return n
+end
+
+local function capture(inst, parentSid, ancestry)
 	local props = {}
 	for _, name in ipairs(propListFor(inst)) do
 		local ok, raw = pcall(function() return inst[name] end)
+		if not ok and name == "Source" then
+			sourceReadDenied += 1
+		end
 		if ok then
 			local enc
 			if typeof(raw) == "CFrame" then
@@ -337,6 +398,7 @@ local function capture(inst, parentSid)
 		cls    = inst.ClassName,
 		name   = inst.Name,
 		parent = parentSid,
+		anc    = ancestry,      -- где искать или что достроить
 		props  = props,
 	}
 end
@@ -412,7 +474,8 @@ local function scan()
 		return SKIP_CHARACTERS and isCharacter(inst)
 	end
 
-	local function walk(inst, parentSid)
+	-- ancestry накапливается по ходу спуска: короткие записи «имя + класс + номер»
+	local function walk(inst, parentSid, ancestry)
 		for _, child in ipairs(inst:GetChildren()) do
 			if ignored(child) then
 				continue
@@ -430,11 +493,15 @@ local function scan()
 				if type(existing) == "string" and snap[existing] then
 					child:SetAttribute(SID_ATTR, newSid())
 				end
-				local rec = capture(child, parentSid)
+				local rec = capture(child, parentSid, ancestry)
 				rec.hash = hashRecord(rec)
 				snap[rec.sid] = rec
 				index[rec.sid] = child
-				walk(child, rec.sid)
+
+				-- родословная для детей: наша плюс мы сами
+				local deeper = table.clone(ancestry)
+				table.insert(deeper, { n = rec.name, c = rec.cls, s = rec.sid })
+				walk(child, rec.sid, deeper)
 			end
 		end
 	end
@@ -442,7 +509,8 @@ local function scan()
 	for _, rootName in ipairs(ROOTS) do
 		local ok, root = pcall(function() return game:GetService(rootName) end)
 		if ok and root then
-			walk(root, rootSid(rootName))
+			-- в начале родословной сам сервис: с него получатель начнёт поиск
+			walk(root, rootSid(rootName), { { root = rootName } })
 		end
 	end
 
@@ -467,7 +535,12 @@ local function diff(oldSnap, newSnap)
 
 	for sid, prev in pairs(oldSnap) do
 		if not newSnap[sid] then
-			table.insert(events, { op = "del", sid = sid, name = prev.name, base = prev.hash })
+			-- Кладём имя, класс и родословную: у напарника проект другой,
+			-- по одному номеру он объект не найдёт.
+			table.insert(events, {
+				op = "del", sid = sid, name = prev.name, cls = prev.cls,
+				anc = prev.anc, parent = prev.parent, base = prev.hash,
+			})
 		end
 	end
 
@@ -509,12 +582,105 @@ function Apply.setErrorSink(fn) onError = fn or function() end end
 
 local function logError(fmt, ...) onError(string.format(fmt, ...)) end
 
-local function resolveParent(parentSid, index)
-	if type(parentSid) == "string" and parentSid:sub(1, 5) == "root:" then
-		local ok, svc = pcall(function() return game:GetService(parentSid:sub(6)) end)
-		return ok and svc or nil
+-- Обычные сообщения наружу не выводим: их место в журнале панели.
+local function log(_fmt, ...) end
+
+local function serviceByName(name)
+	local ok, svc = pcall(function() return game:GetService(name) end)
+	return ok and svc or nil
+end
+
+-- Ищем ребёнка сначала по номеру, потом по имени и классу.
+local function findChild(parent, entry, index)
+	if entry.s and index[entry.s] then
+		local cached = index[entry.s]
+		if cached.Parent == parent then return cached end
 	end
-	return index[parentSid]
+	for _, c in ipairs(parent:GetChildren()) do
+		if c:GetAttribute(SID_ATTR) == entry.s then
+			index[entry.s] = c
+			return c
+		end
+	end
+	for _, c in ipairs(parent:GetChildren()) do
+		if c.Name == entry.n and c.ClassName == entry.c then
+			return c
+		end
+	end
+	return nil
+end
+
+-- Ищет уже существующий такой же объект: то же имя, тот же класс, тот же
+-- родитель. Нужен, когда карты похожи, но номера у объектов разные.
+local function findTwin(parent, rec, claimed)
+	if not parent then return nil end
+	for _, c in ipairs(parent:GetChildren()) do
+		if c.Name == rec.name and c.ClassName == rec.cls and not claimed[c] then
+			return c
+		end
+	end
+	return nil
+end
+
+-- Родословная спасает, когда проекты разные: родителя с чужим номером у меня
+-- нет, но по цепочке «Workspace → Hive → Hive4» я его найду или создам.
+local function resolveByAncestry(ancestry, index)
+	if type(ancestry) ~= "table" or #ancestry == 0 then return nil end
+
+	local first = ancestry[1]
+	local current = first and first.root and serviceByName(first.root) or nil
+	if not current then return nil end
+
+	for i = 2, #ancestry do
+		local entry = ancestry[i]
+		local found = findChild(current, entry, index)
+		if not found then
+			-- Достраиваем недостающего родителя. Класс берём из родословной,
+			-- поэтому папка останется папкой, а модель моделью.
+			local ok, made = pcall(Instance.new, entry.c or "Folder")
+			if not ok or not made then
+				local ok2, folder = pcall(Instance.new, "Folder")
+				if not ok2 then return nil end
+				made = folder
+			end
+			made.Name = entry.n or "Восстановлено"
+			if entry.s then pcall(function() made:SetAttribute(SID_ATTR, entry.s) end) end
+			made.Parent = current
+			if entry.s then index[entry.s] = made end
+			found = made
+		end
+		current = found
+	end
+	return current
+end
+
+-- Как resolveParent, но ничего не создаёт: для удалений достраивать
+-- родителей бессмысленно и вредно.
+local function resolveParentSoft(parentSid, index, ancestry)
+	if type(parentSid) == "string" and parentSid:sub(1, 5) == "root:" then
+		return serviceByName(parentSid:sub(6))
+	end
+	local direct = index[parentSid]
+	if direct then return direct end
+	if type(ancestry) ~= "table" or #ancestry == 0 then return nil end
+	local current = ancestry[1] and ancestry[1].root and serviceByName(ancestry[1].root) or nil
+	if not current then return nil end
+	for i = 2, #ancestry do
+		local found = findChild(current, ancestry[i], index)
+		if not found then return nil end
+		current = found
+	end
+	return current
+end
+
+local function resolveParent(parentSid, index, ancestry)
+	if type(parentSid) == "string" and parentSid:sub(1, 5) == "root:" then
+		return serviceByName(parentSid:sub(6))
+	end
+	local direct = index[parentSid]
+	if direct then return direct end
+	-- Номера не нашлось — идём по родословной.
+	return resolveByAncestry(ancestry, index)
 end
 
 -- Готовые меши держим наготове: собрать один меш стоит запроса к Roblox,
@@ -523,6 +689,16 @@ local meshCache = {}
 
 -- Точность столкновений и отрисовки влияют на то, как Roblox собирает меш,
 -- поэтому их надо задать при создании: присвоить потом не получится.
+-- Учёт неудач со сборкой мешей: без него «часть мешей не переносится»
+-- превращается в гадание.
+local meshFails = {}
+
+function Apply.takeMeshFails()
+	local list = meshFails
+	meshFails = {}
+	return list
+end
+
 local function makeMeshPart(meshId, collision, render)
 	local key = string.format("%s|%s|%s", meshId, tostring(collision), tostring(render))
 	if meshCache[key] then
@@ -535,7 +711,9 @@ local function makeMeshPart(meshId, collision, render)
 		})
 	end)
 	if not ok or not made then
-		return nil, tostring(made)
+		local reason = tostring(made)
+		meshFails[meshId] = (meshFails[meshId] or reason)
+		return nil, reason
 	end
 	meshCache[key] = made
 	return made:Clone()
@@ -561,8 +739,9 @@ local function createInstance(cls, rec)
 			end
 			local made, err = makeMeshPart(meshId, collision, render)
 			if made then return made end
-			logError("меш %s недоступен (%s) — поставил обычную деталь",
-				meshId, tostring(err):sub(1, 60))
+			-- Заготовка помечается, чтобы при следующем приёме попробовать снова:
+			-- сбой мог быть временным, ассет ещё не догрузился.
+			logError("меш не собрался: %s — %s", meshId, tostring(err):sub(1, 70))
 		end
 	end
 
@@ -584,6 +763,24 @@ local deferredRefs = {}
 -- Эти свойства Roblox запрещает записывать: их учитывают при создании.
 local READ_ONLY = { MeshId = true, CollisionFidelity = true }
 
+-- Сколько раз Studio отказала в записи исходников. Без разрешения на
+-- изменение скриптов плагин не сможет переносить код, и человек должен
+-- об этом узнать, а не гадать.
+local sourceDenied = 0
+
+function Apply.takeSourceDenied()
+	local n = sourceDenied
+	sourceDenied = 0
+	return n
+end
+
+-- Что уже занято присланными записями. Сбрасывается один раз на приём.
+local sessionClaimed = {}
+
+function Apply.beginSession()
+	sessionClaimed = {}
+end
+
 local function applyProps(inst, props)
 	for name, encoded in pairs(props) do
 		if READ_ONLY[name] then continue end
@@ -592,27 +789,60 @@ local function applyProps(inst, props)
 		else
 			local value = decodeValue(encoded)
 			if value ~= nil then
-				pcall(function() inst[name] = value end)
+				local ok, err = pcall(function() inst[name] = value end)
+				if not ok and name == "Source" then
+					sourceDenied += 1
+					if sourceDenied == 1 then
+						logError("Studio не даёт менять скрипты: %s", tostring(err):sub(1, 80))
+					end
+				end
 			end
 		end
 	end
 end
 
+-- Ссылки, чья цель ещё не приехала. Раньше они просто терялись: сварка,
+-- у которой вторая деталь придёт следующей пачкой, оставалась ни к чему
+-- не привязанной. Теперь ждут до трёх приёмов.
+local pendingRefs = {}
+local REF_ATTEMPTS = 3
+
 local function flushRefs(index)
-	local placed, lost = 0, 0
-	for _, r in ipairs(deferredRefs) do
-		local target = index[r.sid]
-		if target and r.inst.Parent then
-			local ok = pcall(function() r.inst[r.prop] = target end)
-			if ok then placed += 1 else lost += 1 end
-		else
-			lost += 1
-		end
-	end
+	local placed, waiting = 0, {}
+
+	-- сначала те, что ждали с прошлого раза
+	local queue = {}
+	for _, r in ipairs(pendingRefs) do table.insert(queue, r) end
+	for _, r in ipairs(deferredRefs) do table.insert(queue, r) end
 	deferredRefs = {}
-	if placed > 0 or lost > 0 then
-		logError("ссылки: поставлено %d, потеряно %d", placed, lost)
+
+	for _, r in ipairs(queue) do
+		local target = index[r.sid]
+		if target and r.inst and r.inst.Parent then
+			local ok = pcall(function() r.inst[r.prop] = target end)
+			if ok then
+				placed += 1
+			else
+				r.tries = (r.tries or 0) + 1
+				if r.tries < REF_ATTEMPTS then table.insert(waiting, r) end
+			end
+		elseif r.inst and r.inst.Parent then
+			-- цель ещё не приехала: подождём следующего приёма
+			r.tries = (r.tries or 0) + 1
+			if r.tries < REF_ATTEMPTS then table.insert(waiting, r) end
+		end
+		-- объект-владелец исчез — ссылку выбрасываем молча
 	end
+
+	pendingRefs = waiting
+	if #waiting > 0 then
+		logError("ссылок ждут цели: %d (доставлю, когда цель приедет)", #waiting)
+	end
+	return placed, #waiting
+end
+
+function Apply.pendingRefCount()
+	return #pendingRefs
 end
 
 -- Применяет один пакет. Возвращает список конфликтов.
@@ -629,7 +859,11 @@ local function applyEvents(events, localSnap, index, authorOfBatch)
 	-- Сборка меша — обращение к Roblox, оно не мгновенное. На большой модели
 	-- их сотни, поэтому каждые 20 объектов отдаём управление Studio,
 	-- иначе она подвиснет на минуту и покажется, что всё сломалось.
-	local built = 0
+	local built, addedCount, adopted = 0, 0, 0
+	-- Закреплённые объекты живут на ВЕСЬ приём, а не на одну порцию.
+	-- Иначе записи из разных порций хватают один и тот же местный объект:
+	-- на проекте с сотнями одноимённых соседей так терялась половина.
+	local claimed = sessionClaimed
 	local function breathe()
 		built += 1
 		if built % 20 == 0 then task.wait() end
@@ -646,8 +880,27 @@ local function applyEvents(events, localSnap, index, authorOfBatch)
 			if index[rec.sid] then
 				table.insert(sets, { op = "set", rec = rec, base = ev.base })
 			else
-				local parent = resolveParent(rec.parent, index)
+				local parent = resolveParent(rec.parent, index, rec.anc)
 				if parent then
+					-- Карты у людей часто похожи: одна копия другой. Тогда объект
+					-- уже есть, но с ДРУГИМ номером — каждая Studio присвоила свой.
+					-- Прежде чем создавать, ищем такой же по имени и классу
+					-- и принимаем его за свой, иначе получим дубликат.
+					-- Занятыми считаем только те объекты, что уже приняли в ЭТОМ
+					-- проходе. Раньше я проверял наличие в местном указателе —
+					-- а там есть ВСЕ местные объекты, поэтому пара никогда не
+					-- находилась и плодились дубликаты.
+					local twin = findTwin(parent, rec, claimed)
+					if twin then
+						pcall(function() twin:SetAttribute(SID_ATTR, rec.sid) end)
+						twin.Name = rec.name
+						applyProps(twin, rec.props)
+						index[rec.sid] = twin
+						claimed[twin] = true
+						adopted += 1
+						continue
+					end
+
 					local inst = createInstance(rec.cls, rec)
 					breathe()
 					if inst then
@@ -656,6 +909,8 @@ local function applyEvents(events, localSnap, index, authorOfBatch)
 						inst:SetAttribute(SID_ATTR, rec.sid)
 						inst.Parent = parent
 						index[rec.sid] = inst
+						claimed[inst] = true
+						addedCount += 1
 					end
 				else
 					table.insert(stillWaiting, ev)
@@ -665,14 +920,52 @@ local function applyEvents(events, localSnap, index, authorOfBatch)
 		if #stillWaiting == #remaining then break end
 		remaining = stillWaiting
 	end
-	for _, ev in ipairs(remaining) do
-		logError("не нашёл родителя для %s — пропустил", ev.rec.name)
+	local skippedCount = #remaining
+	if #remaining > 0 then
+		-- Итогом, а не по строке на объект: иначе консоль заливает сотнями
+		-- одинаковых сообщений и в них не видно ничего полезного.
+		local names = {}
+		for i = 1, math.min(#remaining, 5) do
+			table.insert(names, remaining[i].rec.name)
+		end
+		logError("не нашлось места для %d объектов (%s%s) — пропущены",
+			#remaining, table.concat(names, ", "), #remaining > 5 and ", …" or "")
 	end
 
 	-- Изменения
+	local created, changed = 0, 0
 	for _, ev in ipairs(sets) do
 		local rec = ev.rec
 		local inst = index[rec.sid]
+
+		-- Проекты разные: правку могли прислать для объекта, которого у меня
+		-- никогда не было. Тогда изменение — это на самом деле создание.
+		if not inst then
+			local parent = resolveParent(rec.parent, index, rec.anc)
+			if parent then
+				-- может, он уже есть под тем же именем — тогда берём его
+				local twin = findTwin(parent, rec, claimed)
+				if twin then
+					inst = twin
+					pcall(function() twin:SetAttribute(SID_ATTR, rec.sid) end)
+					index[rec.sid] = twin
+					claimed[twin] = true
+				end
+				if not inst then
+					local made = createInstance(rec.cls, rec)
+					breathe()
+					if made then
+						made.Name = rec.name
+						applyProps(made, rec.props)
+						pcall(function() made:SetAttribute(SID_ATTR, rec.sid) end)
+						made.Parent = parent
+						index[rec.sid] = made
+						created += 1
+					end
+				end
+			end
+		end
+
 		if inst then
 			local mine = localSnap[rec.sid]
 			local base = baseline[rec.sid]
@@ -687,12 +980,17 @@ local function applyEvents(events, localSnap, index, authorOfBatch)
 			else
 				inst.Name = rec.name
 				applyProps(inst, rec.props)
-				local parent = resolveParent(rec.parent, index)
+				local parent = resolveParent(rec.parent, index, rec.anc)
 				if parent and inst.Parent ~= parent then
 					inst.Parent = parent
 				end
+				changed += 1
 			end
 		end
+	end
+
+	if created > 0 then
+		log("достроено объектов, которых не было: %d", created)
 	end
 
 	-- Ссылки между объектами — когда все цели уже созданы.
@@ -711,21 +1009,311 @@ local function applyEvents(events, localSnap, index, authorOfBatch)
 		end
 		return d
 	end
+	-- Ищем, что удалять: сначала по номеру, потом по родословной и имени.
+	-- Без этого удаления в чужом проекте не срабатывают вовсе — номер там свой.
+	local function findVictim(ev)
+		local direct = index[ev.sid]
+		if direct then return direct end
+		if not ev.name or not ev.cls then return nil end
+		local parent = resolveParentSoft(ev.parent, index, ev.anc)
+		if not parent then return nil end
+		for _, c in ipairs(parent:GetChildren()) do
+			if c.Name == ev.name and c.ClassName == ev.cls then return c end
+		end
+		return nil
+	end
+
 	table.sort(dels, function(a, b) return depth(a.sid) > depth(b.sid) end)
+	local removed = 0
 	for _, ev in ipairs(dels) do
-		local inst = index[ev.sid]
+		local inst = findVictim(ev)
 		if inst then
 			pcall(function() inst.Parent = nil end)
 			index[ev.sid] = nil
+			removed += 1
 		end
 	end
 
-	return conflicts
+	return conflicts, {
+		removed = removed,
+		added   = addedCount,
+		adopted = adopted,     -- нашлись такие же объекты, дубликаты не создавались
+		changed = changed,
+		created = created,     -- достроено по правкам объектов, которых не было
+		skipped = skippedCount,
+	}
 end
 
 --==============================================================
 -- Транспорт: свой сервер
 --==============================================================
+--==============================================================
+-- Уборка дубликатов
+--==============================================================
+
+-- Одинаковыми считаем только те, что совпадают полностью: имя, класс и место
+-- в пространстве. Просто одинаковые имена — обычное дело и трогать их нельзя,
+-- а вот две детали в одной точке это всегда след неудачной синхронизации.
+-- Отпечаток объекта: что он такое, где стоит, какого размера и что внутри.
+-- Два объекта считаем одним и тем же, только если отпечатки совпали целиком.
+-- Так модель с тремя деталями не спутается с моделью из трёх других деталей.
+local function fingerprint(inst, depth)
+	depth = depth or 0
+	if depth > 6 then return "…" end
+
+	local parts = { inst.ClassName, inst.Name }
+
+	if inst:IsA("BasePart") then
+		local c = { inst.CFrame:GetComponents() }
+		for i = 1, 12 do
+			table.insert(parts, string.format("%.3f", c[i]))
+		end
+		table.insert(parts, string.format("%.3f/%.3f/%.3f", inst.Size.X, inst.Size.Y, inst.Size.Z))
+		table.insert(parts, tostring(inst.Color))
+		table.insert(parts, inst.Material.Name)
+		table.insert(parts, string.format("%.3f", inst.Transparency))
+		if inst:IsA("MeshPart") then
+			table.insert(parts, inst.MeshId)
+			table.insert(parts, inst.TextureID)
+		end
+	elseif inst:IsA("Model") then
+		-- у модели тоже есть место и габариты
+		local okP, pivot = pcall(function() return inst:GetPivot() end)
+		if okP then
+			local c = { pivot:GetComponents() }
+			for i = 1, 12 do
+				table.insert(parts, string.format("%.3f", c[i]))
+			end
+		end
+		local okS, size = pcall(function() return inst:GetExtentsSize() end)
+		if okS then
+			table.insert(parts, string.format("%.3f/%.3f/%.3f", size.X, size.Y, size.Z))
+		end
+	elseif inst:IsA("LuaSourceContainer") then
+		local okSrc, src = pcall(function() return inst.Source end)
+		table.insert(parts, okSrc and tostring(#src) or "?")
+	end
+
+	-- содержимое: сортируем, чтобы порядок детей не влиял
+	local kids = {}
+	for _, c in ipairs(inst:GetChildren()) do
+		table.insert(kids, fingerprint(c, depth + 1))
+	end
+	table.sort(kids)
+	table.insert(parts, "[" .. table.concat(kids, ";") .. "]")
+
+	return table.concat(parts, "|")
+end
+
+--==============================================================
+-- Приведение к присланному состоянию
+--==============================================================
+
+-- Убирает всё, чего нет в присланном полном снимке. Нужно, когда напарник
+-- отправляет проект целиком: у него объект удалён, а у нас остался.
+-- Трогаем только то, что вообще синхронизируем: чужое и служебное не наше дело.
+-- Только ищет, ничего не удаляет. Возвращает список того, чего нет
+-- в присланном снимке.
+function Apply.findMissing(roots, keepSids, keepPaths)
+	local doomed = {}
+	local SYNCED = Config.SYNCED_CLASSES
+	local IGNORE_NAMES = Config.IGNORE_NAMES
+	local IGNORE_PREFIX = Config.IGNORE_PREFIX
+
+	local function ignored(inst)
+		if IGNORE_NAMES[inst.Name] then return true end
+		for _, pref in ipairs(IGNORE_PREFIX) do
+			if inst.Name:sub(1, #pref) == pref then return true end
+		end
+		return false
+	end
+
+	local function walk(inst, path, depth)
+		if depth > 40 then return end
+		for _, c in ipairs(inst:GetChildren()) do
+			if not ignored(c) and SYNCED[c.ClassName] then
+				local childPath = path .. "/" .. c.Name .. ":" .. c.ClassName
+				local sid = c:GetAttribute(SID_ATTR)
+				if (sid and keepSids[sid]) or keepPaths[childPath] then
+					walk(c, childPath, depth + 1)
+				else
+					table.insert(doomed, { inst = c, path = c:GetFullName(),
+						inside = #c:GetDescendants() })
+				end
+			end
+		end
+	end
+
+	for _, root in ipairs(roots) do
+		local ok, svc = pcall(function() return game:GetService(root) end)
+		if ok and svc then walk(svc, root, 0) end
+	end
+	return doomed
+end
+
+function Apply.pruneMissing(roots, keepSids, keepPaths)
+	local removed, kept = 0, 0
+	local doomed = {}
+
+	local SYNCED = Config.SYNCED_CLASSES
+	local IGNORE_NAMES = Config.IGNORE_NAMES
+	local IGNORE_PREFIX = Config.IGNORE_PREFIX
+
+	local function ignored(inst)
+		if IGNORE_NAMES[inst.Name] then return true end
+		for _, pref in ipairs(IGNORE_PREFIX) do
+			if inst.Name:sub(1, #pref) == pref then return true end
+		end
+		if Config.SKIP_CHARACTERS and inst:FindFirstChildOfClass("Humanoid") then return true end
+		return false
+	end
+
+	local function walk(inst, path, depth)
+		if depth > 40 then return end
+		for _, c in ipairs(inst:GetChildren()) do
+			if not ignored(c) and SYNCED[c.ClassName] then
+				local childPath = path .. "/" .. c.Name .. ":" .. c.ClassName
+				local sid = c:GetAttribute(SID_ATTR)
+				local survives = (sid and keepSids[sid]) or keepPaths[childPath]
+				if survives then
+					kept += 1
+					walk(c, childPath, depth + 1)
+				else
+					-- целиком, вместе с содержимым
+					table.insert(doomed, c)
+				end
+			end
+		end
+	end
+
+	for _, root in ipairs(roots) do
+		local ok, svc = pcall(function() return game:GetService(root) end)
+		if ok and svc then walk(svc, root, 0) end
+	end
+
+	for _, inst in ipairs(doomed) do
+		if inst.Parent then
+			pcall(function() inst.Parent = nil end)
+			removed += 1
+		end
+	end
+	return removed, kept
+end
+
+--==============================================================
+-- Починка пустых мешей
+--==============================================================
+
+-- Меш, приехавший от старой версии плагина, остался белой заготовкой:
+-- MeshId пустой. Сам объект не знает, чем он должен быть — но такой же
+-- по имени обычно есть рядом в проекте. По нему и восстанавливаем.
+function Apply.repairMeshes(roots)
+	-- 1. собираем образцы: имя -> целый меш
+	local samples = {}
+	local broken = {}
+
+	local function walk(inst, depth)
+		if depth > 40 then return end
+		for _, c in ipairs(inst:GetChildren()) do
+			if c:IsA("MeshPart") then
+				if c.MeshId ~= "" then
+					samples[c.Name] = samples[c.Name] or c
+				else
+					table.insert(broken, c)
+				end
+			end
+			walk(c, depth + 1)
+		end
+	end
+	for _, root in ipairs(roots) do
+		local ok, svc = pcall(function() return game:GetService(root) end)
+		if ok and svc then walk(svc, 0) end
+	end
+
+	-- 2. чиним
+	local fixed, hopeless = 0, {}
+	for _, bad in ipairs(broken) do
+		local sample = samples[bad.Name]
+		if sample then
+			local made = makeMeshPart(sample.MeshId, sample.CollisionFidelity, sample.RenderFidelity)
+			if made then
+				-- переносим на новый объект всё, что было у сломанного
+				made.Name = bad.Name
+				made.CFrame = bad.CFrame
+				made.Size = (bad.Size.Magnitude > 0.01) and bad.Size or sample.Size
+				made.Anchored = bad.Anchored
+				made.CanCollide = bad.CanCollide
+				made.Transparency = bad.Transparency
+				made.Color = bad.Color
+				made.Material = bad.Material
+				if sample.TextureID ~= "" then
+					pcall(function() made.TextureID = sample.TextureID end)
+				end
+				local sid = bad:GetAttribute(SID_ATTR)
+				if sid then pcall(function() made:SetAttribute(SID_ATTR, sid) end) end
+				-- переносим детей
+				for _, kid in ipairs(bad:GetChildren()) do
+					kid.Parent = made
+				end
+				made.Parent = bad.Parent
+				bad:Destroy()
+				fixed += 1
+			end
+		else
+			table.insert(hopeless, bad:GetFullName())
+		end
+	end
+	return fixed, hopeless, #broken
+end
+
+--==============================================================
+-- Поиск и уборка дубликатов
+--==============================================================
+
+-- Ничего не удаляет: только находит и возвращает список пар.
+function Apply.findDuplicates(roots)
+	local found = {}
+
+	-- Смотрим только на то, что вообще синхронизируем. Служебное вроде
+	-- TouchTransmitter и Animator движок создаёт сам — это не наши дубликаты.
+	local SYNCED = Config.SYNCED_CLASSES
+
+	local function walk(inst, depth)
+		if depth > 40 then return end
+		local seen = {}
+		for _, c in ipairs(inst:GetChildren()) do
+			if not SYNCED[c.ClassName] then continue end
+			local key = fingerprint(c, 0)
+			if seen[key] then
+				table.insert(found, { keep = seen[key], drop = c, path = c:GetFullName() })
+			else
+				seen[key] = c
+			end
+		end
+		for _, c in ipairs(inst:GetChildren()) do
+			walk(c, depth + 1)
+		end
+	end
+
+	for _, root in ipairs(roots) do
+		local ok, svc = pcall(function() return game:GetService(root) end)
+		if ok and svc then walk(svc, 0) end
+	end
+	return found
+end
+
+function Apply.dedupe(roots)
+	local found = Apply.findDuplicates(roots)
+	local removed = 0
+	for _, pair in ipairs(found) do
+		if pair.drop and pair.drop.Parent then
+			pcall(function() pair.drop.Parent = nil end)
+			removed += 1
+		end
+	end
+	return removed, found
+end
+
 Apply.applyProps  = applyProps
 Apply.flushRefs   = flushRefs
 Apply.applyEvents = applyEvents
@@ -844,6 +1432,7 @@ local S = {
 	autoOn = true, myPending = 0, presenceNote = nil, devShown = false,
 }
 local H = {}
+local oldVersions = 0   -- у скольких участников версия не наша
 
 local function agoText(ts)
 	if not ts then return "давно" end
@@ -882,6 +1471,7 @@ local MUTED  = Color3.fromRGB(140, 149, 166)
 local BLUE   = Color3.fromRGB(58, 122, 224)
 local GREEN  = Color3.fromRGB(66, 160, 96)
 local WARN   = Color3.fromRGB(220, 160, 60)
+local RED    = Color3.fromRGB(214, 92, 92)
 
 local scroll = Instance.new("ScrollingFrame")
 scroll.Size = UDim2.fromScale(1, 1)
@@ -1075,6 +1665,45 @@ do
 	bannerSub.Parent = banner
 end
 
+-- Ход приёма: видно, сколько осталось, и что трогать проект нельзя
+local progFrame, progFill, progText
+do
+	progFrame = Instance.new("Frame")
+	progFrame.Size = UDim2.new(1, 0, 0, 34)
+	progFrame.BackgroundColor3 = PANEL
+	progFrame.BorderSizePixel = 0
+	progFrame.Visible = false
+	progFrame.LayoutOrder = nextOrder()
+	progFrame.Parent = root
+	corner(progFrame)
+
+	local track = Instance.new("Frame")
+	track.Size = UDim2.new(1, -16, 0, 6)
+	track.Position = UDim2.fromOffset(8, 22)
+	track.BackgroundColor3 = FIELD
+	track.BorderSizePixel = 0
+	track.Parent = progFrame
+	corner(track, 3)
+
+	progFill = Instance.new("Frame")
+	progFill.Size = UDim2.new(0, 0, 1, 0)
+	progFill.BackgroundColor3 = GREEN
+	progFill.BorderSizePixel = 0
+	progFill.Parent = track
+	corner(progFill, 3)
+
+	progText = Instance.new("TextLabel")
+	progText.Size = UDim2.new(1, -16, 0, 18)
+	progText.Position = UDim2.fromOffset(8, 3)
+	progText.BackgroundTransparency = 1
+	progText.Font = Enum.Font.GothamMedium
+	progText.TextSize = 12
+	progText.TextXAlignment = Enum.TextXAlignment.Left
+	progText.TextColor3 = WARN
+	progText.Text = ""
+	progText.Parent = progFrame
+end
+
 label("Канал — общий код у обоих", MUTED)
 local chanBox = field("RUSSTEAM-7K4M-92XQ", "channel")
 
@@ -1091,7 +1720,7 @@ local keyBox = field("rt_...", "key")
 local connectBtn = button("Подключиться", BLUE, 38)
 local statusLbl = label("не подключен", MUTED, 32)
 
-label("Кто в канале", MUTED, 18, true)
+local peopleLbl = label("Кто в канале", MUTED, 18, true)
 local peopleFrame = Instance.new("Frame")
 peopleFrame.Size = UDim2.new(1, 0, 0, 0)
 peopleFrame.AutomaticSize = Enum.AutomaticSize.Y
@@ -1137,6 +1766,11 @@ do
 end
 
 local bigBtn = button("Принять большую пачку", WARN)
+local fullAcceptBtn = button("Принять весь проект", WARN, 38)
+local sendDelBtn = button("Отправить удаления", RED, 38)
+local rejectFullBtn = button("Отклонить весь проект")
+local rejectBigBtn = button("Отклонить")
+local rejectSendBtn = button("Не отправлять")
 
 local conflictLbl = label("Конфликты", MUTED, 18, true)
 local conflictFrame = Instance.new("Frame")
@@ -1161,6 +1795,11 @@ end
 
 -- внизу: ручной обмен и переключатель живого режима
 local syncBtn = button("Обменяться сейчас")
+local fullBtn = button("Отправить весь проект")
+local askFullBtn = button("Запросить весь проект")
+local pruneBtn = button("Убрать то, чего нет у напарника")
+local dedupeBtn = button("Убрать дубликаты")
+local repairBtn = button("Починить пустые меши")
 local autoBtn = button("Живой режим: включён", GREEN)
 
 -- Служебное показываем только по просьбе: в обычной работе панель должна
@@ -1169,6 +1808,11 @@ local function setDev(on)
 	S.devShown = on
 	histLbl.Visible = on
 	histFrame.Visible = on
+	peopleLbl.Visible = on
+	peopleFrame.Visible = on
+	pruneBtn.Visible = on and S.connected
+	dedupeBtn.Visible = on and S.connected
+	repairBtn.Visible = on and S.connected
 	conflictLbl.Visible = on or (#S.conflicts > 0)
 	conflictFrame.Visible = on or (#S.conflicts > 0)
 	syncBtn.Visible = on and S.connected
@@ -1236,7 +1880,21 @@ local function onlinePeers()
 	return n
 end
 
+local function refreshProgress()
+	local p = S.progress
+	if not p or not p.total or p.total == 0 then
+		progFrame.Visible = false
+		return
+	end
+	progFrame.Visible = true
+	local share = math.clamp((p.done or 0) / p.total, 0, 1)
+	progFill.Size = UDim2.new(share, 0, 1, 0)
+	progText.Text = string.format("принимаю %d из %d — НЕ ТРОГАЙ ПРОЕКТ (%d%%)",
+		p.done or 0, p.total, math.floor(share * 100))
+end
+
 local function refreshStatus()
+	refreshProgress()
 	statusLbl.Text = S.statusText
 	hintLbl.Visible = not S.connected and (srvBox.Text == "" or keyBox.Text == "")
 	statusLbl.TextColor3 = S.connected and TEXT or MUTED
@@ -1244,11 +1902,37 @@ local function refreshStatus()
 	whoLbl.Text = S.connected and ("подключен как " .. S.meName) or "не подключен"
 	connectBtn.Text = S.connected and "Отключиться" or "Подключиться"
 	connectBtn.BackgroundColor3 = S.connected and PANEL or BLUE
-	syncBtn.Visible = S.connected and S.devShown
+	-- В обычном виде панель отвечает на один вопрос: идёт обмен или нет.
+	-- Всё остальное — под «Показать подробности».
+	syncBtn.Visible    = S.connected and S.devShown
+	fullBtn.Visible    = S.connected and S.devShown
+	askFullBtn.Visible = S.connected and S.devShown
+	pruneBtn.Visible   = S.connected and S.devShown
+	dedupeBtn.Visible  = S.connected and S.devShown
+	repairBtn.Visible  = S.connected and S.devShown
 	autoBtn.Visible = S.connected
 	conflictLbl.Visible = S.devShown or (#S.conflicts > 0)
 	conflictFrame.Visible = S.devShown or (#S.conflicts > 0)
 	bigBtn.Visible = S.bigPending ~= nil
+	if S.bigPending then
+		local d = S.bigPending.deletions
+		bigBtn.Text = d and string.format("Принять УДАЛЕНИЕ %d объектов", d)
+			or string.format("Принять %d изменений", S.bigPending.count or 0)
+		bigBtn.BackgroundColor3 = d and RED or WARN
+	end
+	fullAcceptBtn.Visible = S.fullPending ~= nil
+	sendDelBtn.Visible = S.sendPending ~= nil
+	rejectFullBtn.Visible = S.fullPending ~= nil
+	rejectBigBtn.Visible = S.bigPending ~= nil
+	rejectSendBtn.Visible = S.sendPending ~= nil
+	if S.sendPending then
+		sendDelBtn.Text = string.format("Да, я удалил %d объектов — отправить",
+			S.sendPending.count or 0)
+	end
+	if S.fullPending then
+		fullAcceptBtn.Text = string.format("Принять весь проект: %d объектов",
+			S.fullPending.count or 0)
+	end
 	if S.bigPending then
 		bigBtn.Text = string.format("Принять %d изменений", S.bigPending.count)
 	end
@@ -1294,6 +1978,15 @@ local function refreshStatus()
 		bannerSub.Text = bannerSub.Text .. string.format("  ·  у тебя %d неотправленных", S.myPending)
 	end
 	bannerSub.Text = bannerSub.Text .. (S.autoOn and "  ·  живой режим" or "  ·  вручную")
+	if S.scriptsBlocked then
+		bannerSub.Text = "нет разрешения менять скрипты — код не переносится"
+		bannerSub.TextColor3 = RED
+	elseif oldVersions > 0 then
+		bannerSub.Text = string.format("у %d участник%s версия старее %s — обмен не дойдёт",
+			oldVersions, oldVersions == 1 and "а" or "ов", VERSION)
+		bannerSub.TextColor3 = RED
+	end
+
 	if not RunService:IsEdit() then
 		bannerMain.Text = "ИДЁТ ЗАПУСК ИГРЫ"
 		bannerMain.TextColor3 = MUTED
@@ -1332,6 +2025,7 @@ local function refreshPeople()
 	-- иначе через неделю тут кладбище из старых имён.
 	local now = os.time()
 	local n = 0
+	oldVersions = 0
 	for id, rec in pairs(S.roster) do
 		if type(rec) == "table" and rec.at and (now - rec.at) < IDLE_AFTER then
 			n += 1
@@ -1354,8 +2048,13 @@ local function refreshPeople()
 			d.Parent = f
 			corner(d, 4)
 
+			-- Версия у каждого на виду: разные версии — самая частая причина
+			-- того, что изменения не доходят.
+			local ver = tostring(rec.ver or "?")
+			local outdated = (ver ~= VERSION) and ver ~= "?"
+
 			local t = Instance.new("TextLabel")
-			t.Size = UDim2.new(1, -14, 1, 0)
+			t.Size = UDim2.new(1, -96, 1, 0)
 			t.Position = UDim2.fromOffset(14, 0)
 			t.BackgroundTransparency = 1
 			t.Font = working and Enum.Font.GothamMedium or Enum.Font.Gotham
@@ -1365,6 +2064,35 @@ local function refreshPeople()
 			t.TextColor3 = isMe and MUTED or (working and WARN or TEXT)
 			t.Text = string.format("%s%s — %s", rec.name or id, isMe and " (ты)" or "", state)
 			t.Parent = f
+
+			if not isMe then
+				local kick = Instance.new("TextButton")
+				kick.Size = UDim2.fromOffset(18, 18)
+				kick.Position = UDim2.new(1, -18, 0, 2)
+				kick.BackgroundColor3 = FIELD
+				kick.BorderSizePixel = 0
+				kick.Font = Enum.Font.GothamBold
+				kick.TextSize = 12
+				kick.TextColor3 = RED
+				kick.Text = "×"
+				kick.Parent = f
+				corner(kick, 4)
+				kick.MouseButton1Click:Connect(function()
+					if H.onKick then H.onKick(id, rec.name) end
+				end)
+			end
+
+			local v = Instance.new("TextLabel")
+			v.Size = UDim2.fromOffset(52, 22)
+			v.Position = UDim2.new(1, isMe and -52 or -74, 0, 0)
+			v.BackgroundTransparency = 1
+			v.Font = outdated and Enum.Font.GothamBold or Enum.Font.Gotham
+			v.TextSize = 11
+			v.TextXAlignment = Enum.TextXAlignment.Right
+			v.TextColor3 = outdated and RED or MUTED
+			v.Text = outdated and (ver .. " ⚠") or ver
+			v.Parent = f
+			if outdated then oldVersions += 1 end
 		end
 	end
 	if n == 0 then emptyRow(peopleFrame, "никого") end
@@ -1463,8 +2191,8 @@ local function refreshConflicts()
 end
 
 local function refreshAll()
+	refreshPeople()   -- первым: здесь считаются устаревшие версии
 	refreshStatus()
-	refreshPeople()
 	refreshHistory()
 	refreshConflicts()
 end
@@ -1479,11 +2207,41 @@ end
 	syncBtn.MouseButton1Click:Connect(function()
 		if H.onSync then H.onSync() end
 	end)
+	fullBtn.MouseButton1Click:Connect(function()
+		if H.onFullPush then H.onFullPush() end
+	end)
+	dedupeBtn.MouseButton1Click:Connect(function()
+		if H.onDedupe then H.onDedupe() end
+	end)
+	repairBtn.MouseButton1Click:Connect(function()
+		if H.onRepairMeshes then H.onRepairMeshes() end
+	end)
 	autoBtn.MouseButton1Click:Connect(function()
 		if H.onToggleAuto then H.onToggleAuto() end
 	end)
 	bigBtn.MouseButton1Click:Connect(function()
 		if H.onAcceptBig then H.onAcceptBig() end
+	end)
+	fullAcceptBtn.MouseButton1Click:Connect(function()
+		if H.onAcceptFull then H.onAcceptFull() end
+	end)
+	sendDelBtn.MouseButton1Click:Connect(function()
+		if H.onAcceptSend then H.onAcceptSend() end
+	end)
+	rejectFullBtn.MouseButton1Click:Connect(function()
+		if H.onRejectFull then H.onRejectFull() end
+	end)
+	rejectBigBtn.MouseButton1Click:Connect(function()
+		if H.onRejectBig then H.onRejectBig() end
+	end)
+	rejectSendBtn.MouseButton1Click:Connect(function()
+		if H.onRejectSend then H.onRejectSend() end
+	end)
+	askFullBtn.MouseButton1Click:Connect(function()
+		if H.onRequestFull then H.onRequestFull() end
+	end)
+	pruneBtn.MouseButton1Click:Connect(function()
+		if H.onPrune then H.onPrune() end
 	end)
 	openBtn.Click:Connect(function()
 		widget.Enabled = not widget.Enabled
@@ -1525,6 +2283,13 @@ end)()
 --
 -- Настройки живут в Config, а не здесь.
 
+-- Этот файл — ПЛАГИН. Если его копию случайно оставили скриптом в дереве
+-- проекта, при запуске игры он выполнится как обычный серверный скрипт,
+-- где никакого plugin нет. Тихо выходим, а не падаем с ошибкой.
+if not plugin then
+	return
+end
+
 local HttpService   = game:GetService("HttpService")
 local ChangeHistory = game:GetService("ChangeHistoryService")
 local StudioService = game:GetService("StudioService")
@@ -1548,6 +2313,80 @@ local MAX_INSTANCES = Config.MAX_INSTANCES
 local VERBOSE       = Config.VERBOSE
 
 --==============================================================
+-- Одна копия на Studio
+--==============================================================
+
+-- Плагин легко оказывается установленным дважды: файлом в папке плагинов и
+-- из каталога. Тогда в тулбаре две кнопки, две копии шлют в канал одно и то
+-- же и мешают друг другу. Отметку ставим на CoreGui: она не сохраняется
+-- в файл проекта и исчезает вместе со Studio.
+local CLAIM = "__RussTeamActive"
+local CLAIM_TTL = 12          -- отметку считаем живой столько секунд
+local myClaim = HttpService:GenerateGUID(false)
+
+local function claimHolder()
+	local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+	return ok and cg or nil
+end
+
+local function readClaim()
+	local holder = claimHolder()
+	if not holder then return nil end
+	local ok, raw = pcall(function() return holder:GetAttribute(CLAIM) end)
+	if not ok or type(raw) ~= "string" then return nil end
+	local okJson, data = pcall(function() return HttpService:JSONDecode(raw) end)
+	return okJson and data or nil
+end
+
+local function writeClaim()
+	local holder = claimHolder()
+	if not holder then return end
+	pcall(function()
+		holder:SetAttribute(CLAIM, HttpService:JSONEncode({
+			id = myClaim, ver = Config.VERSION, at = os.time(),
+		}))
+	end)
+end
+
+-- Сравнение версий по числам, а не по алфавиту: иначе «2.10» окажется
+-- меньше «2.9» и новая копия уступит старой.
+local function versionValue(v)
+	local major, minor = tostring(v):match("^(%d+)%.(%d+)")
+	if not major then return -1 end
+	return tonumber(major) * 1000 + tonumber(minor)
+end
+
+-- Возвращает: можно ли работать, и кто мешает.
+local function takeClaim()
+	local other = readClaim()
+	if other and other.id ~= myClaim and other.at and (os.time() - other.at) < CLAIM_TTL then
+		local theirs = tostring(other.ver or "?")
+		-- Новее — забираем работу себе, старее или та же — уступаем.
+		if versionValue(theirs) >= versionValue(Config.VERSION) then
+			return false, theirs
+		end
+	end
+	writeClaim()
+	return true, nil
+end
+
+local allowed, blockedBy = takeClaim()
+if not allowed then
+	warn(string.format("[RussTeam] уже запущена копия версии %s — эта (%s) отключилась. "
+		.. "Удали лишнюю установку: Plugins → Manage Plugins",
+		tostring(blockedBy), Config.VERSION))
+	return
+end
+
+-- Держим отметку свежей, чтобы вторая копия видела: место занято.
+task.spawn(function()
+	while true do
+		writeClaim()
+		task.wait(5)
+	end
+end)
+
+--==============================================================
 -- Состояние
 --==============================================================
 
@@ -1564,6 +2403,10 @@ local S = {
 	myPending    = 0,
 	presenceNote = nil,
 	devShown     = false,
+	scriptsBlocked = false,
+	fullPending  = nil,
+	progress     = nil,
+	sendPending  = nil,
 }
 
 local cfg          = { server = "", key = "", channel = "" }
@@ -1571,6 +2414,19 @@ local knownIds     = {}
 local cursors      = {}
 local lastSnapshot = {}
 local bigApproved  = false
+local dedupeReady  = false   -- второе нажатие подтверждает уборку
+local dedupeFound  = nil
+local dedupeAt     = 0       -- когда нашли: список протухает
+local retries      = {}      -- сколько раз пачка не легла
+local fullPushId   = nil     -- идёт отправка проекта целиком
+local incomingFull = {}      -- собираем части чужого полного снимка
+local fullApproved = false   -- человек подтвердил приём всего проекта
+local lastFullKeep = nil     -- состав последнего принятого полного снимка
+local pruneReady   = false   -- второе нажатие подтверждает уборку лишнего
+local pruneFound   = nil
+local sendDelApproved = false   -- человек подтвердил отправку удалений
+local honoredRequest = nil   -- на какую просьбу уже откликнулись
+local wantFullPush = false   -- нас попросили прислать проект целиком
 local busy         = false
 local tick         = AUTO_TICK
 
@@ -1589,6 +2445,13 @@ end
 
 local function safeId(v)
 	return (tostring(v):gsub("[^%w%-_]", "_"))
+end
+
+-- Две Studio одного человека — это два разных участника: у них разные проекты.
+-- Если считать их одним, ленты и курсоры смешаются и правки будут теряться:
+-- окно, которое синхронизировалось первым, «съест» пачку у второго.
+local function participantId()
+	return tostring(S.meId) .. "-" .. tostring(game.PlaceId)
 end
 
 local function whoAmI()
@@ -1628,7 +2491,7 @@ local function notePresence(list)
 	for id, rec in pairs(list) do
 		local active = type(rec) == "table" and rec.at and (now - rec.at) < Config.IDLE_AFTER
 		local name = (type(rec) == "table" and rec.name) or id
-		if id ~= tostring(S.meId) then
+		if id ~= participantId() then
 			if active and not knownIds[id] then
 				table.insert(came, name)
 				knownIds[id] = name
@@ -1668,27 +2531,146 @@ end
 --==============================================================
 
 local function saveCursors()
+	cursors["full"] = nil
 	local ok, enc = pcall(function() return HttpService:JSONEncode(cursors) end)
-	if ok then plugin:SetSetting("cursors_" .. safeId(cfg.channel), enc) end
+	if ok then plugin:SetSetting("cursors_" .. safeId(cfg.channel) .. "_" .. safeId(game.PlaceId), enc) end
 end
+
+-- Собираем части чужого полного снимка. Прибираться в проекте можно
+-- только когда пришли ВСЕ части: иначе снесём то, что просто ещё не доехало.
+local function collectFull(b, events)
+	local info = b.full
+	if type(info) ~= "table" or not info.id then return false end
+
+	local box = incomingFull[info.id]
+	if not box then
+		-- Новый снимок отменяет предыдущий: подтверждать надо самый свежий.
+		for oldId in pairs(incomingFull) do
+			if oldId ~= info.id then incomingFull[oldId] = nil end
+		end
+		box = { total = tonumber(info.total) or 1, parts = {}, events = {},
+			at = os.time(), from = b.authorName or b.author }
+		incomingFull[info.id] = box
+	end
+	if not box.parts[info.part] then
+		box.parts[info.part] = true
+		for _, ev in ipairs(events) do
+			table.insert(box.events, ev)
+		end
+	end
+
+	local have = 0
+	for _ in pairs(box.parts) do have += 1 end
+	box.have = have
+	return true
+end
+
+-- Применение готового списка событий. Отдельно от applyBatches, чтобы
+-- подтверждённый полный снимок можно было применить без поддельных пакетов.
+local applyDirect
 
 local function applyBatches(batches)
 	local events, byAuthor = {}, {}
+	local fullReady = nil
+
 	for _, b in ipairs(batches) do
 		local owner = tostring(b.author)
 		byAuthor[owner] = math.max(byAuthor[owner] or 0, b.n or 0)
+		local ancs = b.ancs
+		local batchEvents = {}
 		for _, ev in ipairs(b.events or {}) do
-			table.insert(events, ev)
+			-- Разворачиваем короткую ссылку обратно в родословную
+			local rec = ev.rec or ev
+			if ancs and rec.ancRef and not rec.anc then
+				rec.anc = ancs[rec.ancRef]
+			end
+			table.insert(batchEvents, ev)
 		end
+
+		if collectFull(b, batchEvents) then
+			local box = incomingFull[b.full.id]
+			if box.have >= box.total then
+				fullReady = b.full.id
+			else
+				addHistory(string.format("полный снимок: часть %d из %d", box.have, box.total))
+			end
+		else
+			for _, ev in ipairs(batchEvents) do table.insert(events, ev) end
+		end
+	end
+
+	-- Полный снимок собрался. Сам его не применяем: он МЕНЯЕТ ПРОЕКТ ЦЕЛИКОМ,
+	-- включая удаление лишнего. Такое человек должен подтвердить.
+	if fullReady and not fullApproved then
+		local box = incomingFull[fullReady]
+		S.fullPending = { id = fullReady, count = #box.events, from = box.from }
+		S.statusText = string.format(
+			"пришёл ВЕСЬ проект (%d объектов) — подтверди приём внизу", #box.events)
+		addHistory(string.format("полный снимок собран: %d объектов, жду подтверждения",
+			#box.events))
+
+		-- Части уже у нас в памяти, поэтому курсор двигаем: иначе сервер
+		-- будет присылать их снова и снова, а в статусе вечно «принято 0».
+		for owner, n in pairs(byAuthor) do
+			if owner ~= "full" then
+				cursors[owner] = math.max(cursors[owner] or 0, n)
+			end
+		end
+		saveCursors()
+
+		-- Обычные изменения, пришедшие в том же заходе, применяем как всегда:
+		-- ожидание снимка не должно останавливать текущую работу.
+		if #events == 0 then
+			return 0, {}, {}
+		end
+	end
+
+	if fullReady and fullApproved then
+		local box = incomingFull[fullReady]
+		incomingFull[fullReady] = nil
+		fullApproved = false
+		S.fullPending = nil
+		for _, ev in ipairs(box.events) do table.insert(events, ev) end
+		addHistory(string.format("принимаю весь проект: %d объектов", #box.events))
 	end
 	if #events == 0 then return 0, {} end
 
 	-- Предохранитель: очень большую пачку сразу не применяем, иначе один
 	-- сбойный обмен молча снесёт полпроекта.
+	-- Считаем удаления отдельно: они опаснее всего остального вместе взятого.
+	local delCount = 0
+	for _, ev in ipairs(events) do
+		if (ev.op or (ev.rec and ev.rec.op)) == "del" then delCount += 1 end
+	end
+	if delCount > Config.MAX_AUTO_DELETE and not bigApproved then
+		S.bigPending = { events = events, count = #events, deletions = delCount }
+		S.statusText = string.format(
+			"ВНИМАНИЕ: напарник удалил %d объектов — подтверди внизу, если это правда", delCount)
+		addHistory(string.format("пришло %d УДАЛЕНИЙ — жду подтверждения", delCount))
+		logError("пришло %d удалений. Если напарник этого не делал — не подтверждай "
+			.. "и попроси его отправить проект целиком", delCount)
+		for owner, n in pairs(byAuthor) do
+			if owner ~= "full" then
+				cursors[owner] = math.max(cursors[owner] or 0, n)
+			end
+		end
+		saveCursors()
+		return 0, {}, {}
+	end
+
 	if #events > BIG_CHANGE and not bigApproved then
-		S.bigPending = { batches = batches, count = #events }
+		-- Держим события у себя и ОТМЕЧАЕМ ПАЧКИ ПРОЧИТАННЫМИ. Иначе сервер
+		-- шлёт их снова каждые 12 секунд, подтверждение пересоздаётся,
+		-- и приём не двигается с места — ровно как было с полным снимком.
+		S.bigPending = { events = events, count = #events }
 		S.statusText = string.format("подключен · пришло сразу %d изменений — подтверди внизу", #events)
-		return 0, {}
+		for owner, n in pairs(byAuthor) do
+			if owner ~= "full" then
+				cursors[owner] = math.max(cursors[owner] or 0, n)
+			end
+		end
+		saveCursors()
+		return 0, {}, {}
 	end
 	bigApproved = false
 	S.bigPending = nil
@@ -1696,13 +2678,36 @@ local function applyBatches(batches)
 	local recording = ChangeHistory:TryBeginRecording("RussTeam: приём изменений")
 	local localSnap, index = Tree.scan()
 	Apply.setBaseline(lastSnapshot)
-	local got = Apply.applyEvents(events, localSnap, index, "напарник")
+	Apply.beginSession()
+	local got, report = Apply.applyEvents(events, localSnap, index, "напарник")
+	report = report or {}
+	local reallyAppliedNothing = ((report.added or 0) + (report.adopted or 0)
+		+ (report.changed or 0) + (report.created or 0) + (report.removed or 0)) == 0
 	if recording then
 		ChangeHistory:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
 	end
 
+	-- Курсор двигаем, только если пачка ЛЕГЛА. Иначе непринятое пропадало
+	-- навсегда: сервер считал её прочитанной и больше не присылал.
+	-- Но и вечно топтаться нельзя — после трёх попыток сдаёмся с криком.
+	local failed = (report and report.skipped or 0) > 0 and reallyAppliedNothing
 	for owner, n in pairs(byAuthor) do
-		cursors[owner] = math.max(cursors[owner] or 0, n)
+		local key = tostring(owner) .. ":" .. tostring(n)
+		if failed then
+			retries[key] = (retries[key] or 0) + 1
+			if retries[key] < 3 then
+				addHistory(string.format("пачка не легла, попробую ещё (%d из 3)", retries[key]))
+			else
+				logError("пачка от %s не применилась трижды — пропускаю её, "
+					.. "иначе обмен встанет", tostring(owner))
+				addHistory("пачка не легла трижды — пропущена")
+				cursors[owner] = math.max(cursors[owner] or 0, n)
+				retries[key] = nil
+			end
+		else
+			cursors[owner] = math.max(cursors[owner] or 0, n)
+			retries[key] = nil
+		end
 	end
 	saveCursors()
 
@@ -1716,8 +2721,90 @@ local function applyBatches(batches)
 	end
 	while #S.conflicts > MAX_CONFLICTS do table.remove(S.conflicts, 1) end
 
+	-- Конфликт про объект, которого больше нет, только мешает.
+	for i = #S.conflicts, 1, -1 do
+		local sid = S.conflicts[i].sid
+		if sid and not index[sid] then
+			table.remove(S.conflicts, i)
+		end
+	end
+
+	-- Полный снимок: приводим проект в точное соответствие. Всё, чего нет
+	-- у отправителя, убираем — иначе удалённое у него у нас остаётся навсегда.
+	-- Уборки здесь НЕТ. Она удаляла целые ветки, когда признак оставался
+	-- включённым от прошлого полного снимка. Теперь это отдельное действие
+	-- с предпросмотром, а приём только добавляет и правит.
 	lastSnapshot = (Tree.scan())
-	return #events - #got, got
+	-- Принятым считаем только то, что действительно легло в проект.
+	report = report or {}
+	local reallyApplied = (report.added or 0) + (report.adopted or 0)
+		+ (report.changed or 0) + (report.created or 0) + (report.removed or 0)
+	return reallyApplied, got, report
+end
+
+-- Применяет список событий как есть: тем же путём, что и обычный приём,
+-- но без разбора пачек и курсоров.
+applyDirect = function(events)
+	if #events == 0 then return 0, {}, {} end
+
+	-- Сначала родители, потом дети: при постепенном приёме объект не должен
+	-- приезжать раньше того, во что его класть.
+	table.sort(events, function(a, b)
+		local ra, rb = a.rec or a, b.rec or b
+		local da = (type(ra.anc) == "table") and #ra.anc or 0
+		local db = (type(rb.anc) == "table") and #rb.anc or 0
+		if da ~= db then return da < db end
+		return (ra.op or a.op or "") < (rb.op or b.op or "")
+	end)
+
+	local recording = ChangeHistory:TryBeginRecording("RussTeam: приём всего проекта")
+	local localSnap, index = Tree.scan()
+	Apply.setBaseline(lastSnapshot)
+	Apply.beginSession()   -- один список занятых на весь приём
+
+	-- Порциями: Studio не подвисает, и видно, сколько осталось.
+	local SLICE = Config.APPLY_SLICE
+	local got, report = {}, { added = 0, adopted = 0, changed = 0,
+		created = 0, removed = 0, skipped = 0 }
+	local total = #events
+	S.progress = { done = 0, total = total }
+
+	local slice = {}
+	for i = 1, total do
+		table.insert(slice, events[i])
+		if #slice >= SLICE or i == total then
+			local partGot, partReport = Apply.applyEvents(slice, localSnap, index, "напарник")
+			for _, c in ipairs(partGot or {}) do table.insert(got, c) end
+			for k, v in pairs(partReport or {}) do
+				report[k] = (report[k] or 0) + v
+			end
+			slice = {}
+			S.progress.done = i
+			S.statusText = string.format("принимаю: %d из %d — не трогай проект", i, total)
+			pcall(Panel.refresh)
+			task.wait()          -- отдаём управление Studio
+		end
+	end
+	S.progress = nil
+
+	-- Уборка сюда не входит: слишком легко снести чужую ветку.
+	if recording then
+		ChangeHistory:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
+	end
+
+	for _, c in ipairs(got) do
+		local dup = false
+		for _, have in ipairs(S.conflicts) do
+			if have.sid == c.sid then dup = true break end
+		end
+		if not dup then table.insert(S.conflicts, c) end
+	end
+	while #S.conflicts > MAX_CONFLICTS do table.remove(S.conflicts, 1) end
+
+	lastSnapshot = (Tree.scan())
+	local applied = (report.added or 0) + (report.adopted or 0) + (report.changed or 0)
+		+ (report.created or 0) + (report.removed or 0)
+	return applied, got, report
 end
 
 --==============================================================
@@ -1730,20 +2817,113 @@ local function syncOnce(manual)
 		return
 	end
 
+	-- Нас просили прислать проект целиком — делаем это сейчас, в спокойный момент.
+	if wantFullPush then
+		wantFullPush = false
+		-- Сначала убираем свои старые пачки с сервера: иначе они могут
+		-- всплыть задним числом и наложиться поверх свежего снимка.
+		local cleared = Net.post("/v1/reset", {
+			channel = cfg.channel, me = participantId(), name = S.meName, scope = "mine",
+		})
+		if cleared and cleared.cleared and cleared.cleared > 0 then
+			addHistory(string.format("убрал свои старые пачки: %d", cleared.cleared))
+		end
+		fullPushId = HttpService:GenerateGUID(false)
+		lastSnapshot = {}
+		addHistory("отправляю проект целиком по просьбе напарника")
+	end
+
 	local snap, _, count = Tree.scan()
 	local events = Tree.diff(lastSnapshot, snap)
 	S.myPending = #events
 
+	-- Защита у источника: если МОЙ проект вдруг «потерял» кучу объектов,
+	-- это почти всегда беда — сбой, откат, случайное удаление. Рассылать
+	-- такое напарнику нельзя, пока человек не подтвердит.
+	local myDels = 0
+	for _, ev in ipairs(events) do
+		if ev.op == "del" then myDels += 1 end
+	end
+	if myDels > Config.MAX_AUTO_DELETE and not sendDelApproved then
+		S.sendPending = { count = myDels, total = #events }
+		S.statusText = string.format(
+			"у тебя исчезло %d объектов — не отправляю, подтверди внизу", myDels)
+		addHistory(string.format("НЕ отправляю %d удалений — жду подтверждения", myDels))
+		logError("в проекте исчезло %d объектов. Если ты этого не делал — "
+			.. "нажми Ctrl+Z или прими проект напарника целиком", myDels)
+		return
+	end
+	sendDelApproved = false
+	S.sendPending = nil
+
 	local since, hasAny = {}, false
 	for k, v in pairs(cursors) do
-		since[k] = v
-		hasAny = true
+		-- 'full' попадал сюда из-за старой поддельной пачки — это мусор
+		if k ~= "full" then
+			since[k] = v
+			hasAny = true
+		end
+	end
+
+	-- Родословная у соседних объектов одна и та же. Слать её в каждом событии
+	-- значит удваивать объём — вместо этого шлём словарь на всю пачку,
+	-- а в событии оставляем короткую ссылку.
+	local chunkIndex, chunkTotal = 1, 1
+
+	-- ВАЖНО: работаем на копиях. Записи в chunk — это те же таблицы, что лежат
+	-- в снимке. Если стереть у них anc, то будущие события удаления окажутся
+	-- без родословной, и удалять станет нечего: именно так пропадали удаления.
+	local function packAncestry(chunk)
+		if not chunk then return nil, nil end
+		local dict, order = {}, {}
+		local copies = table.create(#chunk)
+
+		for i, ev in ipairs(chunk) do
+			local src = ev.rec or ev
+			local anc = src.anc
+			local id = nil
+			if type(anc) == "table" then
+				local key = {}
+				for _, e in ipairs(anc) do
+					table.insert(key, (e.root or "") .. "/" .. (e.n or "") .. "/" .. (e.s or ""))
+				end
+				id = table.concat(key, ">")
+				if not dict[id] then
+					dict[id] = anc
+					table.insert(order, id)
+				end
+			end
+
+			-- копия записи без anc, но со ссылкой
+			local recCopy = {}
+			for k, v in pairs(src) do
+				if k ~= "anc" then recCopy[k] = v end
+			end
+			if id then recCopy.ancRef = id end
+
+			if ev.rec then
+				local evCopy = {}
+				for k, v in pairs(ev) do
+					if k ~= "rec" then evCopy[k] = v end
+				end
+				evCopy.rec = recCopy
+				copies[i] = evCopy
+			else
+				copies[i] = recCopy
+			end
+		end
+
+		if #order == 0 then return copies, nil end
+		return copies, dict
 	end
 
 	local function makeBody(chunk)
+		local packed, ancs = packAncestry(chunk)
 		return {
+			ancs    = ancs,
+			full    = fullPushId and { id = fullPushId, part = chunkIndex, total = chunkTotal } or nil,
 			channel = cfg.channel,
-			me      = tostring(S.meId),
+			me      = participantId(),
 			name    = S.meName,
 			place   = tostring(game.PlaceId),
 			ver     = VERSION,
@@ -1751,7 +2931,7 @@ local function syncOnce(manual)
 			edit    = true,
 			pending = S.myPending,
 			since   = hasAny and since or {},
-			events  = chunk,
+			events  = packed,
 		}
 	end
 
@@ -1767,6 +2947,7 @@ local function syncOnce(manual)
 				part = {}
 			end
 		end
+		chunkTotal = #chunks
 		addHistory(string.format("изменений много (%d) — отправляю %d порциями", #events, #chunks))
 	elseif #events > 0 then
 		chunks = { events }
@@ -1777,12 +2958,26 @@ local function syncOnce(manual)
 		res, err = Net.post("/v1/sync", makeBody(nil))
 	else
 		for i, chunk in ipairs(chunks) do
+			chunkIndex = i
 			res, err = Net.post("/v1/sync", makeBody(chunk))
 			if err then break end
 			if i < #chunks then task.wait(0.2) end
 		end
 	end
 	if err then
+		-- Сервер может отказать осмысленно: устаревшая версия или отключение.
+		if err:find("устарела") then
+			S.statusText = "обнови плагин · " .. err
+			S.connected = false
+			logError("%s", err)
+			return
+		end
+		if err:find("отключили") then
+			S.statusText = "тебя отключили от канала"
+			S.connected = false
+			addHistory("меня отключили от канала")
+			return
+		end
 		S.statusText = "сбой обмена · " .. err
 		tick = math.min(tick * 2, TICK_MAX)
 		return
@@ -1792,8 +2987,20 @@ local function syncOnce(manual)
 	S.roster = res.roster or S.roster
 	notePresence(S.roster)
 
+	-- Напарник попросил прислать проект целиком — откликаемся один раз.
+	local ask = res.fullRequest
+	if type(ask) == "table" and ask.at and honoredRequest ~= ask.at then
+		honoredRequest = ask.at
+		-- Отправку ставим в очередь, а не запускаем тут же: обмен сейчас занят
+		-- самим собой, и запуск «если не занято» просто пропускался.
+		wantFullPush = true
+		addHistory(string.format("%s просит весь проект — отправлю следующим заходом",
+			tostring(ask.name or ask.by)))
+	end
+
 	local sent = 0
 	if res.n then
+		fullPushId = nil
 		lastSnapshot = snap
 		S.myPending = 0
 		sent = #events
@@ -1805,16 +3012,72 @@ local function syncOnce(manual)
 		addHistory(string.format("проект больше %d объектов — часть не уходит!", MAX_INSTANCES))
 	end
 
-	local applied, got = applyBatches(res.batches or {})
-	if applied > 0 then
+	local applied, got, report = applyBatches(res.batches or {})
+	report = report or {}
+
+	-- Пишем, что произошло на самом деле, а не сколько событий прислали.
+	-- Раньше пропущенные считались принятыми — отсюда «принято», хотя ничего
+	-- не изменилось.
+	if applied > 0 or (report.skipped or 0) > 0 then
 		local who = {}
 		for _, b in ipairs(res.batches or {}) do who[b.authorName or "?"] = true end
 		local names = {}
 		for n in pairs(who) do table.insert(names, n) end
-		addHistory(string.format("принято %d от %s", applied, table.concat(names, ", ")))
+
+		local parts = {}
+		if (report.added or 0) > 0 then table.insert(parts, string.format("создано %d", report.added)) end
+		if (report.adopted or 0) > 0 then table.insert(parts, string.format("узнано своих %d", report.adopted)) end
+		if (report.changed or 0) > 0 then table.insert(parts, string.format("изменено %d", report.changed)) end
+		if (report.created or 0) > 0 then table.insert(parts, string.format("достроено %d", report.created)) end
+		if (report.removed or 0) > 0 then table.insert(parts, string.format("удалено %d", report.removed)) end
+		if (report.skipped or 0) > 0 then table.insert(parts, string.format("НЕ ПРИНЯТО %d", report.skipped)) end
+
+		addHistory(string.format("от %s: %s", table.concat(names, ", "),
+			#parts > 0 and table.concat(parts, ", ") or "ничего"))
+	end
+
+	-- Меши, которые не собрались, и ссылки, ждущие цель: и то и другое
+	-- раньше пропадало молча.
+	local meshFails = Apply.takeMeshFails()
+	local nFails = 0
+	for id, reason in pairs(meshFails) do
+		nFails += 1
+		if nFails <= 3 then
+			addHistory(string.format("меш не собрался: %s", tostring(id):sub(1, 40)))
+			logError("меш %s не собрался: %s", tostring(id), tostring(reason):sub(1, 80))
+		end
+	end
+	if nFails > 0 then
+		S.statusText = string.format("подключен · мешей не собралось: %d", nFails)
+	end
+
+	local waitingRefs = Apply.pendingRefCount()
+	if waitingRefs > 0 then
+		addHistory(string.format("ссылок ждут цели: %d", waitingRefs))
+	end
+
+	-- Запрет на скрипты проверяем ВСЕГДА, а не только когда что-то пришло:
+	-- при отправке отказ на чтение так же смертелен, и человек должен узнать.
+	local readDenied = Serialize.takeSourceReadDenied()
+	local writeDenied = Apply.takeSourceDenied()
+	if readDenied > 0 or writeDenied > 0 then
+		S.scriptsBlocked = true
+		if readDenied > 0 then
+			addHistory(string.format("скрипты не отправлены (%d): нет разрешения", readDenied))
+		end
+		if writeDenied > 0 then
+			addHistory(string.format("скрипты не приняты (%d): нет разрешения", writeDenied))
+		end
+		logError("скрипты не переносятся (не прочитано %d, не записано %d). "
+			.. "Plugins → управление плагинами → RussTeam → разрешить изменение скриптов, "
+			.. "затем перезапустить Studio", readDenied, writeDenied)
 	end
 	if #got > 0 then
 		addHistory(string.format("конфликтов: %d", #got))
+	end
+	if (report.skipped or 0) > 0 then
+		logError("не принято %d изменений — либо у напарника плагин старее 2.7, "
+			.. "либо объектам негде лечь", report.skipped)
 	end
 
 	if res.dropped and res.dropped > 0 then
@@ -1825,9 +3088,12 @@ local function syncOnce(manual)
 	if S.bigPending then return end
 	if res.more then
 		S.statusText = "подключен · есть ещё, доберу следующим заходом"
-	elseif applied > 0 or sent > 0 then
-		S.statusText = string.format("подключен · принято %d, отправлено %d, объектов %d",
-			applied, sent, count)
+	elseif applied > 0 or sent > 0 or (report.skipped or 0) > 0 then
+		local skipped = report.skipped or 0
+		S.statusText = string.format("подключен · принято %d%s, отправлено %d, объектов %d",
+			applied,
+			skipped > 0 and string.format(", НЕ ПРИНЯТО %d", skipped) or "",
+			sent, count)
 	elseif #S.conflicts > 0 then
 		S.statusText = string.format("подключен · конфликтов %d", #S.conflicts)
 	else
@@ -1918,7 +3184,7 @@ local function doConnect(silent)
 		return
 	end
 
-	local saved = plugin:GetSetting("cursors_" .. safeId(cfg.channel))
+	local saved = plugin:GetSetting("cursors_" .. safeId(cfg.channel) .. "_" .. safeId(game.PlaceId))
 	if saved then
 		local okJson, tbl = pcall(function() return HttpService:JSONDecode(saved) end)
 		cursors = (okJson and type(tbl) == "table") and tbl or {}
@@ -1926,8 +3192,37 @@ local function doConnect(silent)
 		cursors = {}
 	end
 
+	-- Сразу проверяем доступ к коду: иначе человек узнает о запрете только
+	-- после первого обмена, когда скрипты уже «не доехали».
+	do
+		local probe
+		for _, root in ipairs({ "ServerScriptService", "ReplicatedStorage", "StarterPlayer" }) do
+			local okSvc, svc = pcall(function() return game:GetService(root) end)
+			if okSvc and svc then
+				for _, d in ipairs(svc:GetDescendants()) do
+					if d:IsA("LuaSourceContainer") then
+						probe = d
+						break
+					end
+				end
+			end
+			if probe then break end
+		end
+		if probe then
+			local okRead = pcall(function() return probe.Source end)
+			S.scriptsBlocked = not okRead
+			if not okRead then
+				logError("нет доступа к коду скриптов — они не будут переноситься. "
+					.. "Plugins → Manage Plugins → RussTeam → разрешить изменение скриптов, "
+					.. "затем перезапустить Studio")
+				addHistory("скрипты заблокированы: нет разрешения")
+			end
+		end
+	end
+
 	lastSnapshot = (Tree.scan())
 	S.connected = true
+	plugin:SetSetting("wantConnected", true)
 	S.statusText = "подключен · канал " .. cfg.channel
 	if not silent then log("подключен как %s, сервер %s", S.meName, cfg.server) end
 end
@@ -1959,13 +3254,27 @@ local handlers = {
 
 	onConnect = function()
 		if S.connected then
+			-- Прощаемся с сервером, чтобы напарник увидел уход сразу,
+			-- а не ждал, пока запись протухнет.
+			local wasChannel = cfg.channel
 			S.connected = false
 			S.roster = {}
 			knownIds = {}
 			S.presenceNote = nil
 			S.statusText = "не подключен · обмен остановлен"
 			addHistory("отключился")
+			-- Запоминаем решение: при следующем запуске сам не подключусь.
+			plugin:SetSetting("wantConnected", false)
 			Panel.refresh()
+			task.spawn(function()
+				pcall(function()
+					Net.post("/v1/leave", {
+						channel = wasChannel,
+						me = participantId(),
+						name = S.meName,
+					})
+				end)
+			end)
 			return
 		end
 		guard(function()
@@ -1975,6 +3284,297 @@ local handlers = {
 				syncOnce(true)
 			end
 		end, "подключаюсь")
+	end,
+
+	-- Пригодится, когда напарник только присоединился или канал почистили:
+	-- обычная отправка шлёт лишь разницу, а ему нужна основа целиком.
+	-- Отправка проекта целиком: получатель приведёт свой проект в точное
+	-- соответствие, включая удаление лишнего. Поэтому пачки помечаются как
+	-- части одного снимка — прибираться можно только когда пришло всё.
+	onFullPush = function()
+		if not S.connected then
+			S.statusText = "не подключен · сначала подключись"
+			Panel.refresh()
+			return
+		end
+		guard(function()
+			-- Чистим свою ленту, чтобы старые пачки не наложились поверх.
+			local cleared, err = Net.post("/v1/reset", {
+				channel = cfg.channel, me = participantId(), name = S.meName, scope = "mine",
+			})
+			if err then
+				S.statusText = "не смог убрать старое · " .. err
+				return
+			end
+			if cleared and cleared.cleared and cleared.cleared > 0 then
+				addHistory(string.format("убрал свои старые пачки: %d", cleared.cleared))
+			end
+			fullPushId = HttpService:GenerateGUID(false)
+			lastSnapshot = {}
+			addHistory("отправляю проект целиком")
+			syncOnce(true)
+			fullPushId = nil
+		end, "отправляю всё")
+	end,
+
+	-- Уборка в два нажатия: сначала показываем, что нашли, и только
+	-- по второму нажатию удаляем. Вслепую тут удалять нельзя.
+	onDedupe = function()
+		guard(function()
+			-- Список объектов протухает: за минуту проект мог измениться,
+			-- и удалять по старому списку опасно.
+			if dedupeReady and (os.time() - dedupeAt) > 60 then
+				dedupeReady = false
+				dedupeFound = nil
+				S.statusText = "список устарел, ищу заново"
+			end
+
+			if not dedupeReady then
+				local found = Apply.findDuplicates(Config.ROOTS)
+				dedupeFound = found
+				dedupeReady = #found > 0
+				dedupeAt = os.time()
+				if #found == 0 then
+					S.statusText = "подключен · дубликатов не нашлось"
+					addHistory("уборка: дубликатов нет")
+					return
+				end
+				-- показываем первые несколько, чтобы человек понял, что уйдёт
+				for i = 1, math.min(#found, 8) do
+					addHistory("дубликат: " .. found[i].path)
+				end
+				S.statusText = string.format(
+					"найдено дубликатов: %d — нажми «Убрать дубликаты» ещё раз, чтобы удалить", #found)
+				return
+			end
+
+			local recording = ChangeHistory:TryBeginRecording("RussTeam: уборка дубликатов")
+			local removed = 0
+			for _, pair in ipairs(dedupeFound or {}) do
+				if pair.drop and pair.drop.Parent then
+					pcall(function() pair.drop.Parent = nil end)
+					removed += 1
+				end
+			end
+			if recording then
+				ChangeHistory:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
+			end
+			dedupeReady = false
+			dedupeFound = nil
+			lastSnapshot = (Tree.scan())
+			addHistory(string.format("уборка: убрано %d", removed))
+			S.statusText = string.format("подключен · убрано %d дубликатов, Ctrl+Z вернёт", removed)
+		end, "ищу дубликаты")
+	end,
+
+	-- Отключить участника из канала: пропадёт из переклички и пять минут
+	-- не сможет вернуться. Его лента остаётся — там может быть нужное.
+	onKick = function(id, name)
+		if not S.connected or not id then return end
+		guard(function()
+			local res, err = Net.post("/v1/kick", {
+				channel = cfg.channel,
+				me = participantId(),
+				name = S.meName,
+				target = tostring(id),
+			})
+			if err then
+				S.statusText = "не отключил · " .. err
+				return
+			end
+			S.roster[tostring(id)] = nil
+			knownIds[tostring(id)] = nil
+			addHistory(string.format("отключил из канала: %s", tostring(name or id)))
+			S.statusText = string.format("подключен · %s отключён от канала", tostring(name or id))
+		end, "отключаю")
+	end,
+
+	onRepairMeshes = function()
+		guard(function()
+			local recording = ChangeHistory:TryBeginRecording("RussTeam: починка мешей")
+			local fixed, hopeless, total = Apply.repairMeshes(Config.ROOTS)
+			if recording then
+				ChangeHistory:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
+			end
+			lastSnapshot = (Tree.scan())
+			if total == 0 then
+				S.statusText = "подключен · пустых мешей нет"
+				addHistory("починка: пустых мешей нет")
+				return
+			end
+			addHistory(string.format("починено мешей: %d из %d", fixed, total))
+			for i = 1, math.min(#hopeless, 5) do
+				addHistory("не нашёл образец: " .. hopeless[i])
+			end
+			S.statusText = string.format("подключен · починено мешей %d из %d%s",
+				fixed, total,
+				#hopeless > 0 and string.format(", без образца %d", #hopeless) or "")
+		end, "чиню меши")
+	end,
+
+	-- Попросить напарника прислать проект целиком.
+	onRequestFull = function()
+		if not S.connected then
+			S.statusText = "не подключен · сначала подключись"
+			Panel.refresh()
+			return
+		end
+		guard(function()
+			local _, err = Net.post("/v1/request-full", {
+				channel = cfg.channel, me = participantId(), name = S.meName,
+			})
+			if err then
+				S.statusText = "не попросил · " .. err
+				return
+			end
+			addHistory("попросил прислать проект целиком")
+			S.statusText = "подключен · попросил напарника прислать всё, жду"
+		end, "прошу прислать всё")
+	end,
+
+	-- Подтвердить приём всего проекта.
+	onAcceptFull = function()
+		if not S.fullPending then return end
+		guard(function()
+			local id = S.fullPending.id
+			local box = incomingFull[id]
+			if not box or #box.events == 0 then
+				S.fullPending = nil
+				incomingFull[id] = nil
+				S.statusText = "снимок устарел — нажми «Запросить весь проект»"
+				return
+			end
+
+			-- Применяем прямо из собранного снимка: поддельный пакет для этого
+			-- заводил мусорный курсор и путал учёт.
+			incomingFull[id] = nil
+			S.fullPending = nil
+
+			-- Запоминаем состав снимка: по нему можно потом осознанно убрать
+			-- то, чего у напарника нет. Отдельной кнопкой, не здесь.
+			local keepSids, keepPaths = {}, {}
+			for _, ev in ipairs(box.events) do
+				local rec = ev.rec or ev
+				if rec.sid then keepSids[rec.sid] = true end
+				if rec.anc and rec.name and rec.cls then
+					local path = {}
+					for _, e in ipairs(rec.anc) do
+						table.insert(path, e.root or ((e.n or "") .. ":" .. (e.c or "")))
+					end
+					table.insert(path, rec.name .. ":" .. rec.cls)
+					keepPaths[table.concat(path, "/")] = true
+				end
+			end
+			lastFullKeep = { sids = keepSids, paths = keepPaths, at = os.time(),
+				count = #box.events }
+
+			local applied, got, report = applyDirect(box.events)
+			addHistory(string.format("весь проект принят: %d изменений", applied))
+			S.statusText = string.format("подключен · принят весь проект: %d изменений", applied)
+		end, "принимаю весь проект")
+	end,
+
+	-- Убрать то, чего нет у напарника. Только по прямой просьбе, в два
+	-- нажатия и со списком: раньше это делалось само и сносило целые ветки.
+	onPrune = function()
+		guard(function()
+			if not lastFullKeep then
+				S.statusText = "сначала прими весь проект — потом можно убрать лишнее"
+				addHistory("уборка лишнего: сначала нужен полный снимок")
+				return
+			end
+			if os.time() - lastFullKeep.at > 900 then
+				lastFullKeep = nil
+				pruneReady = false
+				S.statusText = "снимок устарел — прими весь проект заново"
+				return
+			end
+
+			if not pruneReady then
+				local doomed = Apply.findMissing(Config.ROOTS,
+					lastFullKeep.sids, lastFullKeep.paths)
+				pruneFound = doomed
+				pruneReady = #doomed > 0
+				if #doomed == 0 then
+					S.statusText = "подключен · лишнего нет"
+					addHistory("уборка лишнего: нечего убирать")
+					return
+				end
+				for i = 1, math.min(#doomed, 10) do
+					addHistory("лишнее: " .. doomed[i].path)
+				end
+				S.statusText = string.format(
+					"нашлось лишнего: %d — нажми ещё раз, чтобы убрать", #doomed)
+				return
+			end
+
+			local recording = ChangeHistory:TryBeginRecording("RussTeam: уборка лишнего")
+			local removed = 0
+			for _, item in ipairs(pruneFound or {}) do
+				if item.inst and item.inst.Parent then
+					pcall(function() item.inst.Parent = nil end)
+					removed += 1
+				end
+			end
+			if recording then
+				ChangeHistory:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
+			end
+			pruneReady = false
+			pruneFound = nil
+			lastSnapshot = (Tree.scan())
+			addHistory(string.format("убрано лишнего: %d", removed))
+			S.statusText = string.format("подключен · убрано %d, Ctrl+Z вернёт", removed)
+		end, "ищу лишнее")
+	end,
+
+	-- Отказаться от полного снимка: он просто выбрасывается.
+	onRejectFull = function()
+		if not S.fullPending then return end
+		local id = S.fullPending.id
+		local count = S.fullPending.count or 0
+		incomingFull[id] = nil
+		S.fullPending = nil
+		addHistory(string.format("отклонил весь проект: %d объектов", count))
+		S.statusText = string.format("подключен · отклонено %d объектов, проект не тронут", count)
+		Panel.refresh()
+	end,
+
+	-- Отказаться от большой пачки или от удалений.
+	onRejectBig = function()
+		if not S.bigPending then return end
+		local count = S.bigPending.count or 0
+		local dels = S.bigPending.deletions
+		S.bigPending = nil
+		addHistory(dels
+			and string.format("отклонил удаление %d объектов", dels)
+			or string.format("отклонил %d изменений", count))
+		S.statusText = dels
+			and string.format("подключен · удаление %d объектов отклонено", dels)
+			or string.format("подключен · %d изменений отклонено", count)
+		Panel.refresh()
+	end,
+
+	-- Отказаться отправлять свои удаления.
+	onRejectSend = function()
+		if not S.sendPending then return end
+		local count = S.sendPending.count or 0
+		S.sendPending = nil
+		-- Точку отсчёта сдвигаем: считаем, что этих удалений не было.
+		lastSnapshot = (Tree.scan())
+		addHistory(string.format("не отправляю %d удалений", count))
+		S.statusText = string.format("подключен · %d удалений не отправлено", count)
+		Panel.refresh()
+	end,
+
+	-- Подтвердить отправку массовых удалений.
+	onAcceptSend = function()
+		if not S.sendPending then return end
+		guard(function()
+			sendDelApproved = true
+			S.sendPending = nil
+			addHistory("подтвердил отправку удалений")
+			syncOnce(true)
+		end, "отправляю")
 	end,
 
 	onSync = function()
@@ -2000,11 +3600,15 @@ local handlers = {
 	onAcceptBig = function()
 		if not S.bigPending then return end
 		guard(function()
-			bigApproved = true
-			local batches = S.bigPending.batches
+			local events = S.bigPending.events
 			S.bigPending = nil
-			local applied = applyBatches(batches)
+			if not events or #events == 0 then
+				S.statusText = "подключен · подтверждать нечего"
+				return
+			end
+			local applied = applyDirect(events)
 			addHistory(string.format("подтверждено вручную: принято %d", applied))
+			S.statusText = string.format("подключен · принято %d изменений", applied)
 		end, "переношу")
 	end,
 }
@@ -2055,6 +3659,12 @@ task.defer(function()
 	end
 
 	local chan, srv, key = Panel.fields()
+	local wanted = plugin:GetSetting("wantConnected")
+	if wanted == false then
+		S.statusText = "не подключен · ты отключился сам, нажми «Подключиться»"
+		Panel.refresh()
+		return
+	end
 	if chan ~= "" and srv ~= "" and key ~= "" then
 		guard(function()
 			doConnect(true)

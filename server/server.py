@@ -25,6 +25,9 @@ KEYS_FILE = os.environ.get("RUSSTEAM_KEYS", "/opt/russteam/keys.txt")
 MAX_BODY      = 32 * 1024 * 1024  # предел на один запрос; крупное плагин шлёт порциями
 MAX_EVENTS    = 50000             # событий в одной отправке
 MAX_PULL_BYTES = 4 * 1024 * 1024  # сколько отдаём за один приём; остаток — следующим
+MIN_VERSION   = (3, 0)            # плагины старее в канал не пускаем: они шлют
+                                  # пачки без родословной, применить их нельзя
+KICK_TIMEOUT  = 300               # сколько держим отключённого за дверью, секунд
 RATE_WINDOW   = 60                # окно подсчёта частоты, секунды
 RATE_LIMIT    = 300               # запросов с одного адреса за окно
 # Пачки НЕ выбрасываются по количеству: пока хоть один участник их не забрал,
@@ -32,7 +35,8 @@ RATE_LIMIT    = 300               # запросов с одного адрес�
 MAX_BATCHES   = 20000             # предохранитель от бесконечного роста
 MAX_FEED_BYTES = 512 * 1024 * 1024   # полгигабайта на ленту одного автора
 KEEP_MIN      = 20                # столько последних держим всегда
-ROSTER_TTL    = 7 * 24 * 3600     # молчащих дольше недели убираем из переклички
+ROSTER_TTL    = 3600              # молчащих больше часа убираем из переклички:
+                                  # иначе в списке висят призраки от старых версий
 CHANNEL_TTL   = 30 * 24 * 3600    # канал без движения месяц — удаляем файл
 
 _lock = threading.Lock()
@@ -83,6 +87,15 @@ def rate_ok(ip):
     return True
 
 
+def version_ok(ver):
+    """Версия плагина не ниже минимальной. Неизвестную считаем старой."""
+    try:
+        major, minor = str(ver).split(".")[:2]
+        return (int(major), int(minor)) >= MIN_VERSION
+    except (ValueError, AttributeError):
+        return False
+
+
 def channel_path(channel):
     return os.path.join(DATA_DIR, channel + ".json")
 
@@ -125,12 +138,16 @@ def flush_to_disk():
             pass
 
 
-def prune_roster(roster):
+def prune_roster(roster, feeds=None):
+    """Убираем молчащих. Их ленты уходят вместе с ними: держать чужое
+    прошлое опасно — оно всплывёт у того, кто подключится позже."""
     now = time.time()
     for uid in list(roster.keys()):
         rec = roster.get(uid) or {}
         if now - float(rec.get("at", 0)) > ROSTER_TTL:
             del roster[uid]
+            if feeds is not None:
+                feeds.pop(uid, None)
 
 
 def min_ack(author, roster, me):
@@ -208,6 +225,7 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def handle_one_request(self):
+        self._body_read = False
         """Любая непойманная ошибка должна стать честным ответом 500,
         а не обрывом соединения: клиент иначе видит ConnectionClosed
         и не понимает, что произошло."""
@@ -264,10 +282,10 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def fail(self, code, text):
-        # Тело запроса надо дочитать, иначе его остаток попадёт в следующий
-        # запрос по тому же соединению и превратится в мусор. Но если тело
-        # заведомо огромное, дочитывать нечего — соединение всё равно закроем.
-        if not self.close_connection:
+        # Тело надо дочитать, иначе его остаток попадёт в следующий запрос
+        # по тому же соединению. Но если оно УЖЕ прочитано, читать нечего:
+        # попытка приводит к зависанию до таймаута.
+        if not self.close_connection and not getattr(self, "_body_read", False):
             self.drain_body()
         self.close_connection = True
         self.reply(code, {"ok": False, "error": text}, close=True)
@@ -285,6 +303,7 @@ class Handler(BaseHTTPRequestHandler):
             remaining -= len(chunk)
 
     def read_json(self):
+        self._body_read = True
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
             return None, "пустой запрос"
@@ -444,7 +463,86 @@ class Handler(BaseHTTPRequestHandler):
                 save(channel, data)
             return self.reply(200, {"ok": True, "roster": roster})
 
+        if url.path == "/v1/reset":
+            # Убрать старые пачки, чтобы они не всплыли задним числом.
+            # Нумерация НЕ сбрасывается: иначе у получателей курсор окажется
+            # больше нового номера, и свежий снимок будет молча пропущен.
+            scope = str(payload.get("scope") or "mine")
+            with _lock:
+                data = load(channel)
+                feeds = data.setdefault("feeds", {})
+                seq = data.setdefault("seq", {})
+                cleared = 0
+                targets = list(feeds.keys()) if scope == "all" else [me]
+                for author in targets:
+                    batches = feeds.get(author) or []
+                    if batches:
+                        last = max(int(b.get("n", 0)) for b in batches)
+                        seq[author] = max(int(seq.get(author, 0)), last)
+                        cleared += len(batches)
+                    feeds[author] = []
+                save(channel, data)
+            print(f"[очистка] {name} убрал {cleared} пачек ({scope}) в канале {channel}",
+                  flush=True)
+            return self.reply(200, {"ok": True, "cleared": cleared})
+
+        if url.path == "/v1/request-full":
+            # Просьба к остальным прислать проект целиком. Живёт 5 минут:
+            # дольше держать бессмысленно, а забытая просьба будет мешать.
+            with _lock:
+                data = load(channel)
+                data["fullRequest"] = {"by": me, "name": name, "at": int(time.time())}
+                save(channel, data)
+            return self.reply(200, {"ok": True})
+
+        if url.path == "/v1/kick":
+            # Отключить участника из канала. Его лента остаётся: в ней могут
+            # быть изменения, нужные остальным.
+            target = str(payload.get("target") or "")
+            if not target:
+                return self.fail(400, "не указан, кого отключать")
+            with _lock:
+                data = load(channel)
+                roster = data.setdefault("roster", {})
+                name = (roster.get(target) or {}).get("name", target)
+                roster.pop(target, None)
+                kicked = data.setdefault("kicked", {})
+                kicked[target] = int(time.time())
+                # подчищаем просроченные запреты
+                now = int(time.time())
+                for uid in list(kicked.keys()):
+                    if now - int(kicked[uid]) > KICK_TIMEOUT:
+                        del kicked[uid]
+                save(channel, data)
+            print(f"[отключён] {name} ({target}) из канала {channel}", flush=True)
+            return self.reply(200, {"ok": True, "kicked": name})
+
+        if url.path == "/v1/leave":
+            # Человек ушёл сам. Убираем его из переклички сразу, а не через час:
+            # напарник должен видеть правду, а не призрака.
+            with _lock:
+                data = load(channel)
+                roster = data.setdefault("roster", {})
+                existed = roster.pop(me, None) is not None
+                # Лента остаётся: в ней могут лежать изменения, которых
+                # остальные ещё не забрали.
+                save(channel, data)
+            return self.reply(200, {"ok": True, "left": existed})
+
         if url.path == "/v1/sync":
+            # Старые версии в канал не пускаем: их пачки применить невозможно,
+            # а в перекличке они висят призраками.
+            if not version_ok(payload.get("ver")):
+                return self.fail(426, "версия плагина устарела — обнови до "
+                                      f"{MIN_VERSION[0]}.{MIN_VERSION[1]} или новее")
+
+            with _lock:
+                data = load(channel)
+                kicked = data.get("kicked") or {}
+                when = kicked.get(me)
+            if when and (int(time.time()) - int(when)) < KICK_TIMEOUT:
+                return self.fail(403, "тебя отключили от канала")
+
             # Всё за один заход: отметиться, отдать своё, забрать чужое.
             # Втрое меньше запросов и втрое меньше задержка.
             events = payload.get("events")
@@ -462,9 +560,23 @@ class Handler(BaseHTTPRequestHandler):
                     if len(events) > MAX_EVENTS:
                         return self.fail(400, f"слишком много изменений за раз: {len(events)}")
                     feed = feeds.setdefault(me, [])
-                    sent_n = max([int(b.get("n", 0)) for b in feed] or [0]) + 1
-                    feed.append({"n": sent_n, "at": int(time.time()),
-                                 "author": name, "events": events})
+                    seq = data.setdefault("seq", {})
+                    highest = max([int(b.get("n", 0)) for b in feed] or [0])
+                    sent_n = max(highest, int(seq.get(me, 0))) + 1
+                    seq[me] = sent_n
+                    batch = {"n": sent_n, "at": int(time.time()),
+                             "author": name, "events": events}
+                    # Словарь родословных идёт вместе с пачкой: события
+                    # ссылаются на него, чтобы не повторять одно и то же.
+                    ancs = payload.get("ancs")
+                    if isinstance(ancs, dict) and ancs:
+                        batch["ancs"] = ancs
+                    # Метка «часть полного снимка»: получатель приберётся
+                    # только когда соберёт все части.
+                    full = payload.get("full")
+                    if isinstance(full, dict) and full.get("id"):
+                        batch["full"] = full
+                    feed.append(batch)
                     feeds[me] = trim_feed(feed, min_ack(me, roster, me))
 
                 roster[me] = {
@@ -479,7 +591,7 @@ class Handler(BaseHTTPRequestHandler):
                     # полю решаем, что уже можно выбросить.
                     "since": {str(k): int(v or 0) for k, v in since.items()},
                 }
-                prune_roster(roster)
+                prune_roster(roster, feeds)
 
                 # Чистим только забранное всеми
                 report = {}
@@ -489,6 +601,12 @@ class Handler(BaseHTTPRequestHandler):
                 pending = []
                 for author, feed in sorted(feeds.items()):
                     if author == me:
+                        continue
+                    # Лента участника, которого уже нет в перекличке, — это
+                    # прошлое: закрытое место, старая версия, ушедший человек.
+                    # Отдавать её новичкам нельзя: она вернёт удалённое
+                    # и наплодит вторые копии.
+                    if author not in roster:
                         continue
                     seen = int(since.get(author, 0) or 0)
                     for batch in sorted(feed, key=lambda b: int(b.get("n", 0))):
@@ -504,6 +622,10 @@ class Handler(BaseHTTPRequestHandler):
                         "at": batch.get("at"),
                         "events": batch.get("events", []),
                     }
+                    if batch.get("ancs"):
+                        piece["ancs"] = batch["ancs"]
+                    if batch.get("full"):
+                        piece["full"] = batch["full"]
                     size = len(json.dumps(piece, ensure_ascii=False).encode("utf-8"))
                     if out and budget + size > MAX_PULL_BYTES:
                         more = True
@@ -513,8 +635,17 @@ class Handler(BaseHTTPRequestHandler):
 
                 save(channel, data)
 
+                # Просьба прислать проект целиком — если она не наша и свежая
+                req = data.get("fullRequest")
+                ask = None
+                if isinstance(req, dict) and req.get("by") != me:
+                    if int(time.time()) - int(req.get("at", 0)) < 300:
+                        ask = {"by": req.get("by"), "name": req.get("name"),
+                               "at": req.get("at")}
+
             return self.reply(200, {"ok": True, "n": sent_n, "batches": out,
                                     "roster": roster, "more": more,
+                                    "fullRequest": ask,
                                     "dropped": report.get("dropped", 0)})
 
         if url.path == "/v1/push":
