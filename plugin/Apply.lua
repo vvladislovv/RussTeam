@@ -51,8 +51,22 @@ end
 
 -- Ищет уже существующий такой же объект: то же имя, тот же класс, тот же
 -- родитель. Нужен, когда карты похожи, но номера у объектов разные.
+-- Узнавание «своих» нужно ТОЛЬКО когда сводятся две похожие карты, то есть
+-- при приёме проекта целиком. В обычном обмене «добавлено» означает новый
+-- объект: иначе копия, сделанная через Ctrl+D, молча сливалась с оригиналом
+-- и у напарника вторая модель не появлялась вовсе.
+local adoptAllowed = false
+
+function Apply.setAdopt(on)
+	adoptAllowed = on and true or false
+end
+
 local function findTwin(parent, rec, claimed)
+	if not adoptAllowed then return nil end
 	if not parent then return nil end
+	-- Достаточно, что объект ещё не закреплён за другой присланной записью
+	-- в этом же проходе. Дополнительная проверка «занят ли он номером»
+	-- только мешала: при сведении карт у местных объектов номера свои.
 	for _, c in ipairs(parent:GetChildren()) do
 		if c.Name == rec.name and c.ClassName == rec.cls and not claimed[c] then
 			return c

@@ -31,7 +31,7 @@ Config.VERBOSE        = false
 -- Дубликаты предотвращаются при приёме (объект узнаётся, а не создаётся),
 -- а разовая уборка осталась кнопкой в подробностях.
 Config.AUTO_DEDUPE    = false
-Config.VERSION        = "5.3"          -- видно на сервере: сразу ясно, у кого что запущено
+Config.VERSION        = "5.4"          -- видно на сервере: сразу ясно, у кого что запущено
 -- Надёжность важнее скорости: за 12 секунд крупная пачка успевает применяться
 -- целиком, и обмены не наступают друг другу на пятки.
 Config.AUTO_TICK      = 12
@@ -612,8 +612,22 @@ end
 
 -- Ищет уже существующий такой же объект: то же имя, тот же класс, тот же
 -- родитель. Нужен, когда карты похожи, но номера у объектов разные.
+-- Узнавание «своих» нужно ТОЛЬКО когда сводятся две похожие карты, то есть
+-- при приёме проекта целиком. В обычном обмене «добавлено» означает новый
+-- объект: иначе копия, сделанная через Ctrl+D, молча сливалась с оригиналом
+-- и у напарника вторая модель не появлялась вовсе.
+local adoptAllowed = false
+
+function Apply.setAdopt(on)
+	adoptAllowed = on and true or false
+end
+
 local function findTwin(parent, rec, claimed)
+	if not adoptAllowed then return nil end
 	if not parent then return nil end
+	-- Достаточно, что объект ещё не закреплён за другой присланной записью
+	-- в этом же проходе. Дополнительная проверка «занят ли он номером»
+	-- только мешала: при сведении карт у местных объектов номера свои.
 	for _, c in ipairs(parent:GetChildren()) do
 		if c.Name == rec.name and c.ClassName == rec.cls and not claimed[c] then
 			return c
@@ -2678,6 +2692,7 @@ local function applyBatches(batches)
 	local recording = ChangeHistory:TryBeginRecording("RussTeam: приём изменений")
 	local localSnap, index = Tree.scan()
 	Apply.setBaseline(lastSnapshot)
+	Apply.setAdopt(false)   -- обычное «добавлено» — это новый объект
 	Apply.beginSession()
 	local got, report = Apply.applyEvents(events, localSnap, index, "напарник")
 	report = report or {}
@@ -2760,6 +2775,7 @@ applyDirect = function(events)
 	local recording = ChangeHistory:TryBeginRecording("RussTeam: приём всего проекта")
 	local localSnap, index = Tree.scan()
 	Apply.setBaseline(lastSnapshot)
+	Apply.setAdopt(true)    -- сводим две похожие карты: узнаём свои объекты
 	Apply.beginSession()   -- один список занятых на весь приём
 
 	-- Порциями: Studio не подвисает, и видно, сколько осталось.

@@ -406,6 +406,7 @@ local function applyBatches(batches)
 	local recording = ChangeHistory:TryBeginRecording("RussTeam: приём изменений")
 	local localSnap, index = Tree.scan()
 	Apply.setBaseline(lastSnapshot)
+	Apply.setAdopt(false)   -- обычное «добавлено» — это новый объект
 	Apply.beginSession()
 	local got, report = Apply.applyEvents(events, localSnap, index, "напарник")
 	report = report or {}
@@ -488,6 +489,7 @@ applyDirect = function(events)
 	local recording = ChangeHistory:TryBeginRecording("RussTeam: приём всего проекта")
 	local localSnap, index = Tree.scan()
 	Apply.setBaseline(lastSnapshot)
+	Apply.setAdopt(true)    -- сводим две похожие карты: узнаём свои объекты
 	Apply.beginSession()   -- один список занятых на весь приём
 
 	-- Порциями: Studio не подвисает, и видно, сколько осталось.

@@ -8,7 +8,7 @@
 
 Разные аккаунты, разные карты, разные города — общий обмен.
 
-[![версия](https://img.shields.io/badge/версия-5.3-3a7ae0)](https://github.com/vvladislovv/RussTeam/releases)
+[![версия](https://img.shields.io/badge/версия-5.4-3a7ae0)](https://github.com/vvladislovv/RussTeam/releases)
 [![плагин](https://img.shields.io/badge/Roblox-плагин-d63e3e)](https://create.roblox.com/store/asset/97875424740318/RussTeam)
 [![лицензия](https://img.shields.io/badge/лицензия-MIT-66a060)](LICENSE)
 
@@ -109,6 +109,10 @@ RussTeam слушает 0.0.0.0:8770, данные в /opt/russteam/data
 
 Опознание объектов идёт по скрытому атрибуту, который едет вместе с объектом. Поэтому
 переименование или перетаскивание в другую папку не создаёт дубликат.
+
+Копия через `Ctrl+D` наследует этот атрибут, поэтому обход выдаёт ей новый — и
+копия доезжает как отдельный объект. Сведение одноимённых объектов работает
+**только** при приёме проекта целиком, когда две похожие карты сводятся вместе.
 
 Подробности — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
