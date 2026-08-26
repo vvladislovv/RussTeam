@@ -189,7 +189,7 @@ rojo build -o RussTeam.rbxm     # file for the plugins folder
 **vvladislovv**
 
 [![GitHub](https://img.shields.io/badge/GitHub-vvladislovv-181717?logo=github)](https://github.com/vvladislovv)
-[![Telegram](https://img.shields.io/badge/Telegram-message-2AABEE?logo=telegram)](https://t.me/vvladislovv)
+[![Telegram](https://img.shields.io/badge/Telegram-dislov__freelance-2AABEE?logo=telegram)](https://t.me/dislov_freelance)
 [![Roblox](https://img.shields.io/badge/Roblox-profile-d63e3e?logo=roblox)](https://www.roblox.com/users/707163568/profile)
 
 Found a bug or have an idea — [open an issue](https://github.com/vvladislovv/RussTeam/issues).

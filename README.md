@@ -185,7 +185,7 @@ rojo build -o RussTeam.rbxm     # файл для папки плагинов
 **vvladislovv**
 
 [![GitHub](https://img.shields.io/badge/GitHub-vvladislovv-181717?logo=github)](https://github.com/vvladislovv)
-[![Telegram](https://img.shields.io/badge/Telegram-написать-2AABEE?logo=telegram)](https://t.me/vvladislovv)
+[![Telegram](https://img.shields.io/badge/Telegram-dislov__freelance-2AABEE?logo=telegram)](https://t.me/dislov_freelance)
 [![Roblox](https://img.shields.io/badge/Roblox-профиль-d63e3e?logo=roblox)](https://www.roblox.com/users/707163568/profile)
 
 Нашёл ошибку или есть идея — [открой issue](https://github.com/vvladislovv/RussTeam/issues).
